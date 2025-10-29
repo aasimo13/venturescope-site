@@ -22,24 +22,36 @@ Visit: [https://aasimo13.github.io/venturescope-site/](https://aasimo13.github.i
 ## 🛠️ Tech Stack
 
 - Pure HTML/CSS/JavaScript (no frameworks needed)
-- Google Fonts (Inter)
+- Google Fonts (Inter + Space Grotesk)
 - Responsive design
 - GitHub Pages for hosting
-- Tally for booking/payments
+- Google Sheets integration for form submissions
+- Admin panel for easy management
 
 ## 📝 Quick Start
 
 1. Clone the repository
-2. Make edits to `index.html`
-3. Commit and push to main branch
-4. GitHub Pages will auto-deploy
+2. Visit `/admin.html` to set up admin password
+3. Configure Google Sheets integration via admin panel
+4. GitHub Pages will auto-deploy on push
 
-## 🎨 Customization
+## 🎨 Color Scheme
 
-All styling is in the `<style>` section of `index.html`. Key variables:
-- Primary color: `#667eea`
-- Secondary color: `#764ba2`
-- Font: Inter (Google Fonts)
+Modern red/gray/black theme:
+- Primary color: `#dc2626` (Red)
+- Secondary color: `#374151` (Gray)
+- Accent color: `#f87171` (Light Red)
+- Font: Inter + Space Grotesk (Google Fonts)
+
+## 🔐 Admin Panel
+
+Visit `admin.html` to access the management dashboard:
+- Set up Google Sheets integration
+- Configure form messages
+- Manage settings without editing code
+- Password-protected and secure
+
+See `ADMIN-SETUP.md` for complete instructions.
 
 ## 📊 TODO Before Launch
 

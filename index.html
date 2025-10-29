@@ -1695,8 +1695,15 @@
       submitBtn.disabled = true;
 
       try {
-        // TODO: Replace with your Google Apps Script Web App URL
-        const GOOGLE_APPS_SCRIPT_URL = 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE';
+        // Get settings from admin panel (localStorage)
+        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
+        const GOOGLE_APPS_SCRIPT_URL = settings.googleScriptUrl || '';
+        const successMessage = settings.successMessage || 'Thank you! We\'ll be in touch within 24 hours.';
+        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
+
+        if (!GOOGLE_APPS_SCRIPT_URL) {
+          throw new Error('Google Sheets integration not configured. Please contact the site administrator.');
+        }
 
         // Prepare data for submission
         const submissionData = {
@@ -1722,13 +1729,15 @@
         submitBtn.disabled = false;
 
         // Show success message
-        alert('Thank you! We\'ll be in touch within 24 hours.');
+        alert(successMessage);
 
       } catch (error) {
         console.error('Error submitting form:', error);
         submitBtn.innerHTML = originalText;
         submitBtn.disabled = false;
-        alert('There was an error submitting your request. Please try again or email us directly at hello@venturescope.systems');
+        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
+        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
+        alert(`There was an error submitting your request. Please try again or email us directly at ${contactEmail}`);
       }
     });
 
@@ -1867,8 +1876,14 @@
       submitBtn.disabled = true;
 
       try {
-        // TODO: Replace with your Google Apps Script Web App URL
-        const GOOGLE_APPS_SCRIPT_URL = 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE';
+        // Get settings from admin panel (localStorage)
+        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
+        const GOOGLE_APPS_SCRIPT_URL = settings.googleScriptUrl || '';
+        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
+
+        if (!GOOGLE_APPS_SCRIPT_URL) {
+          throw new Error('Google Sheets integration not configured. Please contact the site administrator.');
+        }
 
         // Prepare data for submission
         const submissionData = {
@@ -1906,7 +1921,9 @@
 
       } catch (error) {
         console.error('Error submitting form:', error);
-        alert('There was an error submitting your request. Please try again or email us directly at hello@venturescope.systems');
+        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
+        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
+        alert(`There was an error submitting your request. Please try again or email us directly at ${contactEmail}`);
         submitBtn.innerHTML = originalText;
         submitBtn.disabled = false;
       }

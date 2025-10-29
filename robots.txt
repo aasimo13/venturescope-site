@@ -1,0 +1,9 @@
+# VentureScope Robots.txt
+# Prevent indexing of admin panel
+
+User-agent: *
+Disallow: /admin.html
+Disallow: /admin
+Allow: /
+
+Sitemap: https://aasimo13.github.io/venturescope-site/sitemap.xml
