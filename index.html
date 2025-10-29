@@ -33,11 +33,11 @@
 
   <style>
     :root {
-      --primary: #6366f1;
-      --primary-dark: #4f46e5;
-      --primary-light: #818cf8;
-      --secondary: #8b5cf6;
-      --accent: #ec4899;
+      --primary: #dc2626;
+      --primary-dark: #991b1b;
+      --primary-light: #ef4444;
+      --secondary: #374151;
+      --accent: #f87171;
       --success: #10b981;
       --warning: #f59e0b;
       --dark: #0f172a;
@@ -168,7 +168,7 @@
       min-height: 100vh;
       display: flex;
       align-items: center;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+      background: linear-gradient(135deg, #0f172a 0%, #dc2626 40%, #991b1b 100%);
       overflow: hidden;
       padding: 8rem 2rem 4rem;
     }
@@ -1688,25 +1688,48 @@
 
       if (!isValid) return;
 
-      // Submit form (you would replace this with your actual form submission logic)
+      // Submit form
       const submitBtn = quickForm.querySelector('button[type="submit"]');
       const originalText = submitBtn.innerHTML;
       submitBtn.innerHTML = '<span class="loading"></span>';
       submitBtn.disabled = true;
 
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      try {
+        // TODO: Replace with your Google Apps Script Web App URL
+        const GOOGLE_APPS_SCRIPT_URL = 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE';
 
-      // For now, just log the data and show success
-      console.log('Quick Form Data:', Object.fromEntries(formData));
+        // Prepare data for submission
+        const submissionData = {
+          formType: 'quick',
+          fullName: formData.get('fullName'),
+          email: formData.get('email'),
+          service: formData.get('service')
+        };
 
-      // Reset form
-      quickForm.reset();
-      submitBtn.innerHTML = originalText;
-      submitBtn.disabled = false;
+        // Submit to Google Sheets
+        const response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
+          method: 'POST',
+          mode: 'no-cors', // Required for Google Apps Script
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(submissionData)
+        });
 
-      // Show success message
-      alert('Thank you! We\'ll be in touch within 24 hours.');
+        // Reset form
+        quickForm.reset();
+        submitBtn.innerHTML = originalText;
+        submitBtn.disabled = false;
+
+        // Show success message
+        alert('Thank you! We\'ll be in touch within 24 hours.');
+
+      } catch (error) {
+        console.error('Error submitting form:', error);
+        submitBtn.innerHTML = originalText;
+        submitBtn.disabled = false;
+        alert('There was an error submitting your request. Please try again or email us directly at hello@venturescope.systems');
+      }
     });
 
     // Multi-Step Form Logic
@@ -1844,33 +1867,37 @@
       submitBtn.disabled = true;
 
       try {
-        // This is where you would send the data to your backend
-        // For now, we'll simulate an API call
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // TODO: Replace with your Google Apps Script Web App URL
+        const GOOGLE_APPS_SCRIPT_URL = 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE';
 
-        // Log the form data (in production, this would be sent to your server)
-        console.log('Intake Form Data:', Object.fromEntries(formData));
+        // Prepare data for submission
+        const submissionData = {
+          formType: 'intake',
+          fullName: formData.get('fullName'),
+          workEmail: formData.get('workEmail'),
+          phone: formData.get('phone'),
+          jobTitle: formData.get('jobTitle'),
+          companyName: formData.get('companyName'),
+          industry: formData.get('industry'),
+          teamSize: formData.get('teamSize'),
+          website: formData.get('website'),
+          service: formData.get('service'),
+          processDescription: formData.get('processDescription'),
+          painPoints: formData.get('painPoints'),
+          startDate: formData.get('startDate'),
+          budgetRange: formData.get('budgetRange'),
+          hearAbout: formData.get('hearAbout')
+        };
 
-        // You could also send to Google Forms, Airtable, or your email using services like:
-        // - FormSpree: https://formspree.io/
-        // - Google Apps Script
-        // - Netlify Forms
-        // - Your own API endpoint
-
-        // Example: Send to FormSpree (replace with your endpoint)
-        /*
-        const response = await fetch('https://formspree.io/f/YOUR_FORM_ID', {
+        // Submit to Google Sheets
+        const response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
           method: 'POST',
-          body: formData,
+          mode: 'no-cors', // Required for Google Apps Script
           headers: {
-            'Accept': 'application/json'
-          }
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(submissionData)
         });
-
-        if (!response.ok) {
-          throw new Error('Form submission failed');
-        }
-        */
 
         // Hide form, show success message
         document.querySelector('.intake-form').style.display = 'none';
