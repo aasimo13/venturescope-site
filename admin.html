@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VentureScope Admin Panel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --primary: #dc2626;
+      --primary-dark: #991b1b;
+      --primary-light: #ef4444;
+      --secondary: #374151;
+      --dark: #0f172a;
+      --dark-light: #1e293b;
+      --gray: #64748b;
+      --gray-light: #cbd5e1;
+      --gray-lighter: #f1f5f9;
+      --white: #ffffff;
+      --success: #10b981;
+      --warning: #f59e0b;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, var(--dark) 0%, var(--dark-light) 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 800px;
+    }
+
+    /* Login Screen */
+    .login-card {
+      background: var(--white);
+      border-radius: 16px;
+      padding: 3rem;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      text-align: center;
+    }
+
+    .login-card h1 {
+      color: var(--dark);
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .login-card p {
+      color: var(--gray);
+      margin-bottom: 2rem;
+    }
+
+    .form-group {
+      margin-bottom: 1.5rem;
+      text-align: left;
+    }
+
+    .form-group label {
+      display: block;
+      color: var(--dark);
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      font-size: 0.875rem;
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: 2px solid var(--gray-lighter);
+      border-radius: 8px;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 1rem;
+      background: var(--primary);
+      color: var(--white);
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .btn:hover {
+      background: var(--primary-dark);
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(220, 38, 38, 0.3);
+    }
+
+    .btn:disabled {
+      background: var(--gray-light);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .error-message {
+      background: #fee;
+      color: #c00;
+      padding: 0.75rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+      display: none;
+    }
+
+    .error-message.show {
+      display: block;
+    }
+
+    .success-message {
+      background: #efe;
+      color: #080;
+      padding: 0.75rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+      display: none;
+    }
+
+    .success-message.show {
+      display: block;
+    }
+
+    /* Admin Dashboard */
+    .admin-panel {
+      display: none;
+      background: var(--white);
+      border-radius: 16px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+    }
+
+    .admin-panel.active {
+      display: block;
+    }
+
+    .admin-header {
+      background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+      color: var(--white);
+      padding: 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .admin-header h1 {
+      font-size: 1.5rem;
+    }
+
+    .logout-btn {
+      background: rgba(255, 255, 255, 0.2);
+      color: var(--white);
+      border: 2px solid var(--white);
+      padding: 0.5rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.3s;
+    }
+
+    .logout-btn:hover {
+      background: var(--white);
+      color: var(--primary);
+    }
+
+    .admin-content {
+      padding: 2rem;
+    }
+
+    .settings-section {
+      margin-bottom: 2rem;
+    }
+
+    .settings-section h2 {
+      color: var(--dark);
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid var(--gray-lighter);
+    }
+
+    .setting-item {
+      background: var(--gray-lighter);
+      padding: 1.5rem;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .setting-item h3 {
+      color: var(--dark);
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .setting-item p {
+      color: var(--gray);
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+
+    .setting-item input,
+    .setting-item textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 2px solid var(--gray-light);
+      border-radius: 8px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 0.875rem;
+    }
+
+    .setting-item textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-left: 0.5rem;
+    }
+
+    .status-badge.configured {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .status-badge.not-configured {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .info-box {
+      background: #dbeafe;
+      border-left: 4px solid #3b82f6;
+      padding: 1rem;
+      border-radius: 4px;
+      margin: 1rem 0;
+      font-size: 0.875rem;
+      color: #1e40af;
+    }
+
+    .danger-zone {
+      background: #fee;
+      border: 2px solid #fcc;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .danger-zone h3 {
+      color: #c00;
+      margin-bottom: 0.5rem;
+    }
+
+    .danger-zone p {
+      color: var(--gray);
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+
+    .btn-danger {
+      background: #dc2626;
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.3s;
+    }
+
+    .btn-danger:hover {
+      background: #991b1b;
+    }
+
+    .btn-secondary {
+      background: var(--secondary);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.3s;
+      margin-right: 0.5rem;
+    }
+
+    .btn-secondary:hover {
+      background: var(--dark-light);
+    }
+
+    .first-time-setup {
+      background: #fef3c7;
+      border-left: 4px solid var(--warning);
+      padding: 1.5rem;
+      border-radius: 4px;
+      margin-bottom: 2rem;
+    }
+
+    .first-time-setup h3 {
+      color: #92400e;
+      margin-bottom: 0.5rem;
+    }
+
+    .first-time-setup p {
+      color: #78350f;
+      font-size: 0.875rem;
+    }
+
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 50px;
+      height: 24px;
+    }
+
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--gray-light);
+      transition: 0.4s;
+      border-radius: 24px;
+    }
+
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.4s;
+      border-radius: 50%;
+    }
+
+    input:checked + .toggle-slider {
+      background-color: var(--success);
+    }
+
+    input:checked + .toggle-slider:before {
+      transform: translateX(26px);
+    }
+
+    @media (max-width: 768px) {
+      body {
+        padding: 1rem;
+      }
+
+      .login-card {
+        padding: 2rem;
+      }
+
+      .admin-header {
+        flex-direction: column;
+        gap: 1rem;
+        text-align: center;
+      }
+
+      .admin-content {
+        padding: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Login Screen -->
+    <div id="loginScreen" class="login-card">
+      <h1>🔒 VentureScope Admin</h1>
+      <p>Secure Management Panel</p>
+
+      <div id="firstTimeSetup" class="first-time-setup" style="display: none;">
+        <h3>👋 First Time Setup</h3>
+        <p>Create your admin password to secure this panel. Make sure to use a strong password!</p>
+      </div>
+
+      <div id="errorMsg" class="error-message"></div>
+      <div id="successMsg" class="success-message"></div>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="password">Admin Password</label>
+          <input type="password" id="password" placeholder="Enter your password" required>
+        </div>
+        <button type="submit" class="btn">Login</button>
+      </form>
+
+      <div id="setPasswordForm" style="display: none;">
+        <div class="form-group">
+          <label for="newPassword">Create Admin Password</label>
+          <input type="password" id="newPassword" placeholder="Create a strong password" required minlength="8">
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">Confirm Password</label>
+          <input type="password" id="confirmPassword" placeholder="Confirm your password" required minlength="8">
+        </div>
+        <button type="button" id="setPasswordBtn" class="btn">Set Password & Continue</button>
+      </div>
+    </div>
+
+    <!-- Admin Dashboard -->
+    <div id="adminPanel" class="admin-panel">
+      <div class="admin-header">
+        <h1>⚙️ VentureScope Settings</h1>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+      </div>
+
+      <div class="admin-content">
+        <div id="adminSuccessMsg" class="success-message"></div>
+
+        <!-- Google Sheets Integration -->
+        <div class="settings-section">
+          <h2>Google Sheets Integration <span id="sheetsStatus" class="status-badge not-configured">Not Configured</span></h2>
+
+          <div class="info-box">
+            <strong>📋 Setup Instructions:</strong> Follow the guide in <code>GOOGLE-SHEETS-SETUP.md</code> to create your Google Apps Script and get the Web App URL. Then paste it below.
+          </div>
+
+          <div class="setting-item">
+            <h3>Google Apps Script Web App URL</h3>
+            <p>The URL from your deployed Google Apps Script (ends with /exec)</p>
+            <input type="url" id="googleScriptUrl" placeholder="https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec">
+          </div>
+
+          <div class="setting-item">
+            <h3>Test Connection</h3>
+            <p>Verify your Google Sheets integration is working correctly</p>
+            <button class="btn-secondary" onclick="testConnection()">Test Connection</button>
+            <div id="testResult" style="margin-top: 1rem;"></div>
+          </div>
+        </div>
+
+        <!-- Email Notifications -->
+        <div class="settings-section">
+          <h2>Email Notifications <span id="emailStatus" class="status-badge not-configured">Configured in Script</span></h2>
+
+          <div class="info-box">
+            <strong>📧 Note:</strong> Email notifications are configured in your Google Apps Script. Edit the script to enable/disable email alerts.
+          </div>
+
+          <div class="setting-item">
+            <h3>Notification Email</h3>
+            <p>The email address where form submissions will be sent (configured in Google Apps Script)</p>
+            <input type="email" id="notificationEmail" placeholder="your-email@example.com" readonly>
+            <p style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--gray);">
+              To change this, update the <code>YOUR_EMAIL</code> variable in your Google Apps Script
+            </p>
+          </div>
+        </div>
+
+        <!-- Form Settings -->
+        <div class="settings-section">
+          <h2>Form Settings</h2>
+
+          <div class="setting-item">
+            <h3>Form Success Message</h3>
+            <p>Message shown to users after successful submission</p>
+            <input type="text" id="successMessage" placeholder="Thank you! We'll be in touch within 24 hours." value="Thank you! We'll be in touch within 24 hours.">
+          </div>
+
+          <div class="setting-item">
+            <h3>Contact Email Display</h3>
+            <p>Email address shown in error messages (does not need to match notification email)</p>
+            <input type="email" id="contactEmail" placeholder="hello@venturescope.systems" value="hello@venturescope.systems">
+          </div>
+        </div>
+
+        <!-- Save Settings -->
+        <div style="text-align: right; margin-top: 2rem;">
+          <button class="btn-secondary" onclick="location.reload()">Cancel</button>
+          <button class="btn" onclick="saveSettings()">Save All Settings</button>
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="danger-zone">
+          <h3>⚠️ Danger Zone</h3>
+          <p>These actions cannot be undone. Proceed with caution.</p>
+          <button class="btn-danger" onclick="changePassword()">Change Admin Password</button>
+          <button class="btn-danger" onclick="clearAllSettings()" style="margin-left: 0.5rem;">Clear All Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Security: Simple password hashing (in production, use backend authentication)
+    async function hashPassword(password) {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(password + 'venturescope_salt_2024');
+      const hash = await crypto.subtle.digest('SHA-256', data);
+      return Array.from(new Uint8Array(hash))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+
+    // Check if first time setup
+    window.addEventListener('DOMContentLoaded', () => {
+      const hasPassword = localStorage.getItem('vsAdminPass');
+      if (!hasPassword) {
+        document.getElementById('firstTimeSetup').style.display = 'block';
+        document.getElementById('loginForm').style.display = 'none';
+        document.getElementById('setPasswordForm').style.display = 'block';
+      }
+    });
+
+    // Set initial password
+    document.getElementById('setPasswordBtn').addEventListener('click', async () => {
+      const newPass = document.getElementById('newPassword').value;
+      const confirmPass = document.getElementById('confirmPassword').value;
+      const errorMsg = document.getElementById('errorMsg');
+
+      if (newPass.length < 8) {
+        errorMsg.textContent = 'Password must be at least 8 characters long';
+        errorMsg.classList.add('show');
+        return;
+      }
+
+      if (newPass !== confirmPass) {
+        errorMsg.textContent = 'Passwords do not match';
+        errorMsg.classList.add('show');
+        return;
+      }
+
+      const hashedPass = await hashPassword(newPass);
+      localStorage.setItem('vsAdminPass', hashedPass);
+
+      document.getElementById('successMsg').textContent = 'Password set successfully! Logging you in...';
+      document.getElementById('successMsg').classList.add('show');
+
+      setTimeout(() => {
+        document.getElementById('loginScreen').style.display = 'none';
+        document.getElementById('adminPanel').classList.add('active');
+        loadSettings();
+      }, 1000);
+    });
+
+    // Login
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const password = document.getElementById('password').value;
+      const hashedPass = await hashPassword(password);
+      const storedPass = localStorage.getItem('vsAdminPass');
+      const errorMsg = document.getElementById('errorMsg');
+
+      if (hashedPass === storedPass) {
+        document.getElementById('loginScreen').style.display = 'none';
+        document.getElementById('adminPanel').classList.add('active');
+        loadSettings();
+      } else {
+        errorMsg.textContent = 'Invalid password. Please try again.';
+        errorMsg.classList.add('show');
+        document.getElementById('password').value = '';
+      }
+    });
+
+    // Logout
+    function logout() {
+      if (confirm('Are you sure you want to logout?')) {
+        location.reload();
+      }
+    }
+
+    // Load settings from localStorage
+    function loadSettings() {
+      const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
+
+      if (settings.googleScriptUrl) {
+        document.getElementById('googleScriptUrl').value = settings.googleScriptUrl;
+        document.getElementById('sheetsStatus').textContent = 'Configured';
+        document.getElementById('sheetsStatus').classList.remove('not-configured');
+        document.getElementById('sheetsStatus').classList.add('configured');
+      }
+
+      if (settings.successMessage) {
+        document.getElementById('successMessage').value = settings.successMessage;
+      }
+
+      if (settings.contactEmail) {
+        document.getElementById('contactEmail').value = settings.contactEmail;
+      }
+    }
+
+    // Save settings
+    function saveSettings() {
+      const settings = {
+        googleScriptUrl: document.getElementById('googleScriptUrl').value,
+        successMessage: document.getElementById('successMessage').value,
+        contactEmail: document.getElementById('contactEmail').value,
+        lastUpdated: new Date().toISOString()
+      };
+
+      localStorage.setItem('vsSettings', JSON.stringify(settings));
+
+      const msg = document.getElementById('adminSuccessMsg');
+      msg.textContent = '✅ Settings saved successfully! Your changes will take effect immediately on the live site.';
+      msg.classList.add('show');
+
+      // Update status badges
+      if (settings.googleScriptUrl) {
+        document.getElementById('sheetsStatus').textContent = 'Configured';
+        document.getElementById('sheetsStatus').classList.remove('not-configured');
+        document.getElementById('sheetsStatus').classList.add('configured');
+      }
+
+      setTimeout(() => {
+        msg.classList.remove('show');
+      }, 5000);
+    }
+
+    // Test Google Sheets connection
+    async function testConnection() {
+      const url = document.getElementById('googleScriptUrl').value;
+      const resultDiv = document.getElementById('testResult');
+
+      if (!url) {
+        resultDiv.innerHTML = '<div class="error-message show">Please enter a Google Apps Script URL first</div>';
+        return;
+      }
+
+      resultDiv.innerHTML = '<p style="color: var(--gray);">Testing connection...</p>';
+
+      try {
+        const testData = {
+          formType: 'quick',
+          fullName: 'Test User',
+          email: 'test@example.com',
+          service: 'Test Service'
+        };
+
+        await fetch(url, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(testData)
+        });
+
+        resultDiv.innerHTML = '<div class="success-message show">✅ Test data sent! Check your Google Sheet to verify it was received.</div>';
+      } catch (error) {
+        resultDiv.innerHTML = `<div class="error-message show">❌ Connection failed: ${error.message}</div>`;
+      }
+    }
+
+    // Change password
+    async function changePassword() {
+      const newPass = prompt('Enter new admin password (min 8 characters):');
+      if (!newPass) return;
+
+      if (newPass.length < 8) {
+        alert('Password must be at least 8 characters long');
+        return;
+      }
+
+      const confirmPass = prompt('Confirm new password:');
+      if (newPass !== confirmPass) {
+        alert('Passwords do not match');
+        return;
+      }
+
+      const hashedPass = await hashPassword(newPass);
+      localStorage.setItem('vsAdminPass', hashedPass);
+      alert('Password changed successfully! Please login again.');
+      location.reload();
+    }
+
+    // Clear all settings
+    function clearAllSettings() {
+      if (confirm('Are you sure you want to clear all settings? This cannot be undone.')) {
+        if (confirm('This will remove your Google Sheets URL and all configurations. Continue?')) {
+          localStorage.removeItem('vsSettings');
+          alert('All settings cleared. Reloading...');
+          location.reload();
+        }
+      }
+    }
+
+    // Prevent back button after logout
+    window.history.pushState(null, "", window.location.href);
+    window.onpopstate = function() {
+      window.history.pushState(null, "", window.location.href);
+    };
+  </script>
+</body>
+</html>
