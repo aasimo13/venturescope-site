@@ -35,8 +35,11 @@
 // ============================================
 
 const CONFIG = {
-  // Your Resend API Key
-  RESEND_API_KEY: 'RESEND_KEY_REMOVED_SET_VIA_SCRIPT_PROPERTIES',
+  // Your Resend API Key — read from Script Properties, never hardcoded.
+  // The repo owner must set this once in Apps Script:
+  //   Project Settings > Script Properties > add key "RESEND_API_KEY" with your Resend key.
+  // (See RESEND-EMAIL-SETUP.md, "Super Secure Setup", for details.)
+  RESEND_API_KEY: PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY'),
 
   // Email Settings
   FROM_EMAIL: 'onboarding@resend.dev', // Update with your verified domain in Resend
