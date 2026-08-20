@@ -473,7 +473,14 @@
 
           <div class="setting-item">
             <h3>Test Connection</h3>
-            <p>Verify your Google Sheets integration is working correctly</p>
+            <p>
+              Verify your Google Sheets integration is working correctly. This sends a
+              <strong>real submission</strong>: it writes a row to your "Quick Forms" sheet and
+              sends a real confirmation email, and it consumes one slot of your hourly cap.
+              Because it always uses the same test address, running it twice inside the
+              recipient cooldown window will report a rate-limit rejection — that means the
+              limiter is working, not that the integration is broken.
+            </p>
             <button class="btn-secondary" onclick="testConnection()">Test Connection</button>
             <div id="testResult" style="margin-top: 1rem;"></div>
           </div>
@@ -673,6 +680,7 @@
       resultDiv.textContent = '';
       const box = document.createElement('div');
       box.className = kind + '-message show';
+      box.style.whiteSpace = 'pre-line';
       box.textContent = text;
       resultDiv.appendChild(box);
     }
@@ -718,7 +726,12 @@
         if (result.status === 'success') {
           showTestResult('success', '✅ Test data accepted! Check your Google Sheet to verify it was received.');
         } else {
-          showTestResult('error', '❌ Endpoint rejected the test: ' + result.message);
+          // A cooldown rejection here means the limiter works. Say so, rather
+          // than leaving an admin to read it as a broken integration.
+          showTestResult('error',
+            '❌ Endpoint rejected the test: ' + result.message +
+            '\n\nIf this mentions a recent request, it is the per-recipient cooldown ' +
+            'doing its job — the integration is fine. Wait for the window to pass and retry.');
         }
       } catch (error) {
         showTestResult('error', '❌ Connection failed: ' + error.message);

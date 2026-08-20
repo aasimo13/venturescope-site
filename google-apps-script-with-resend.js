@@ -2,6 +2,15 @@
  * Google Apps Script for VentureScope Form Submissions
  * WITH RESEND EMAIL INTEGRATION — HARDENED
  *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BEFORE EVERY DEPLOY OF THIS FILE, run these two from the editor and read │
+ * │ the execution log:                                                       │
+ * │     testSecurityControls()   every line must say PASS                    │
+ * │     testSetup()              both script properties must say Yes         │
+ * │ None of this can run in CI — the Apps Script runtime only exists here.   │
+ * │ If you skip it, nothing will tell you the controls stopped working.      │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
  * SECURITY NOTE — READ THIS FIRST
  * --------------------------------
  * An earlier version of this script was an open email relay: it accepted
@@ -163,10 +172,18 @@ function doPost(e) {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
     try {
-      if (formType === 'quick') {
-        handleQuickForm(ss, data, recipient);
-      } else {
-        handleIntakeForm(ss, data, recipient);
+      const confirmationSent = formType === 'quick'
+        ? handleQuickForm(ss, data, recipient)
+        : handleIntakeForm(ss, data, recipient);
+
+      // sendEmailViaResend swallows its own errors and returns false, so a
+      // Resend outage never reaches the catch below. Release the cooldown
+      // anyway: it exists to stop an address being blasted, and nothing was
+      // sent, so there is nothing to hold against a visitor who retries. The
+      // global counter still bounds the retries.
+      if (!confirmationSent) {
+        Logger.log('Confirmation not sent — releasing recipient cooldown.');
+        releaseRecipientCooldown(recipient);
       }
     } catch (handlerError) {
       // Nothing was sent, so don't make a real visitor sit out an hour of
@@ -402,15 +419,18 @@ function handleQuickForm(ss, data, recipient) {
     subjectName: safeSubject(data.fullName, 60)
   };
 
-  // Send confirmation email to customer
-  if (CONFIG.SEND_CONFIRMATION_EMAILS) {
-    sendQuickFormConfirmation(recipient, safe);
-  }
+  // Send confirmation email to customer. Confirmations turned off by config
+  // counts as sent — the cooldown then acts purely as a submission throttle.
+  const confirmationSent = CONFIG.SEND_CONFIRMATION_EMAILS
+    ? sendQuickFormConfirmation(recipient, safe)
+    : true;
 
   // Send notification to business
   if (CONFIG.SEND_NOTIFICATION_EMAILS) {
     sendQuickFormNotification(safe);
   }
+
+  return confirmationSent;
 }
 
 // ============================================
@@ -483,15 +503,18 @@ function handleIntakeForm(ss, data, recipient) {
     subjectService: safeSubject(data.service, 40)
   };
 
-  // Send confirmation email to customer
-  if (CONFIG.SEND_CONFIRMATION_EMAILS) {
-    sendIntakeFormConfirmation(recipient, safe);
-  }
+  // Send confirmation email to customer. Confirmations turned off by config
+  // counts as sent — the cooldown then acts purely as a submission throttle.
+  const confirmationSent = CONFIG.SEND_CONFIRMATION_EMAILS
+    ? sendIntakeFormConfirmation(recipient, safe)
+    : true;
 
   // Send notification to business
   if (CONFIG.SEND_NOTIFICATION_EMAILS) {
     sendIntakeFormNotification(safe);
   }
+
+  return confirmationSent;
 }
 
 // ============================================
@@ -523,7 +546,7 @@ function sendEmailViaResend(to, subject, htmlContent, textContent) {
     to: recipient,
     subject: subject,
     html: htmlContent,
-    text: textContent || htmlContent.replace(/<[^>]*>/g, '') // Strip HTML for text version
+    text: textContent || htmlToPlainText(htmlContent)
   };
 
   const options = {
@@ -552,6 +575,28 @@ function sendEmailViaResend(to, subject, htmlContent, textContent) {
     Logger.log('Error sending email via Resend: ' + error.toString());
     return false;
   }
+}
+
+/**
+ * Plain-text fallback for mail clients that won't render HTML. Naively
+ * stripping tags runs words together across block boundaries (`</p><p>`),
+ * so close out block elements as line breaks first, and decode the entities
+ * our own escaping introduced.
+ */
+function htmlToPlainText(html) {
+  return String(html)
+    .replace(/<\s*(?:br|\/p|\/div|\/h[1-6]|\/li|\/tr|\/table)[^>]*>/gi, '\n')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&')   // last, so &amp;lt; doesn't become <
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 // ============================================
@@ -620,7 +665,7 @@ function sendQuickFormConfirmation(recipient, safe) {
     </html>
   `;
 
-  sendEmailViaResend(recipient, subject, html);
+  return sendEmailViaResend(recipient, subject, html);
 }
 
 function sendQuickFormNotification(safe) {
@@ -760,7 +805,7 @@ function sendIntakeFormConfirmation(recipient, safe) {
     </html>
   `;
 
-  sendEmailViaResend(recipient, subject, html);
+  return sendEmailViaResend(recipient, subject, html);
 }
 
 function sendIntakeFormNotification(safe) {
@@ -923,7 +968,10 @@ function testSecurityControls() {
     ['plain address ok', isValidEmail('someone@example.com'), function (r) { return r === true; }],
     ['subject newline', safeSubject('Hi\r\nBcc: v@x.com'), function (r) { return r.indexOf('\n') === -1 && r.indexOf('\r') === -1; }],
     ['formula injection', sheetSafe('=IMPORTXML(1,2)'), function (r) { return r.charAt(0) === "'"; }],
-    ['token fails closed', verifyToken('anything'), function (r) { return CONFIG.FORM_SHARED_SECRET ? true : r === false; }]
+    ['token fails closed', verifyToken('anything'), function (r) { return CONFIG.FORM_SHARED_SECRET ? true : r === false; }],
+    ['text fallback spacing', htmlToPlainText('<p>one</p><p>two</p>'), function (r) { return r === 'one\ntwo'; }],
+    ['text fallback entities', htmlToPlainText('<p>Ben &amp; Co</p>'), function (r) { return r === 'Ben & Co'; }],
+    ['text fallback drops tags', htmlToPlainText('<p><script>x</script></p>'), function (r) { return r.indexOf('<') === -1; }]
   ];
 
   let failures = 0;

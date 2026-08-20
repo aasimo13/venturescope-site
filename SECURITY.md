@@ -54,7 +54,7 @@ is fixed here on its own merits — not because it was the vector.
 
 `google-apps-script-with-resend.js` now applies six layers, in this order:
 
-1. **Payload cap** — bodies over `MAX_PAYLOAD_BYTES` are rejected before parsing.
+1. **Payload cap** — bodies over `MAX_PAYLOAD_CHARS` are rejected before parsing.
 2. **Honeypot** — a hidden `hp_company_url` field; any non-empty value is dropped
    with a fake success response so bots don't retry.
 3. **Shared-secret token** — `verifyToken()` compares `data.token` against the
@@ -77,10 +77,25 @@ is fixed here on its own merits — not because it was the vector.
 honors `CONFIG.EMAILS_ENABLED` as a kill switch that stops all sending without
 touching the website.
 
-Run `testSecurityControls()` from the Apps Script editor after any change to that
-file. It asserts that script tags, link injection, `javascript:`/`data:` URLs,
-multi-recipient addresses, subject-line newlines, and formula injection are all
-rejected.
+### Testing the controls
+
+Two layers, both required before any deploy of the handler:
+
+```sh
+node test-security-controls.js     # runs anywhere, no dependencies
+```
+
+The escaping and validation helpers are pure, so this stubs the few Apps Script
+globals they touch at load time and asserts the exploit shapes from the incident
+are rejected — script tags, attribute breaks, link injection, `javascript:` and
+`data:` URLs, multi-recipient and display-name addresses, subject-line CRLF, and
+spreadsheet formula injection. It exits non-zero on failure, so it can gate CI.
+
+Then, in the Apps Script editor, run `testSecurityControls()` and `testSetup()`
+and read the execution log. Those cover what node cannot: `PropertiesService`,
+`CacheService`, `LockService`, `SpreadsheetApp` and the live Resend call. There is
+no way to automate that part — if you skip it, nothing will tell you the rate
+limiter or the token gate stopped working.
 
 ### The token is not a real secret
 
@@ -110,9 +125,18 @@ property and update the page) if you see it being used.
 - **Keep unrelated domains on separate accounts.** Every domain verified on an
   account is reachable by any full-access key issued from it, so one leaked key
   burns the reputation of all of them at once.
-- **Keep the caps low.** `MAX_SUBMISSIONS_PER_HOUR` should be a small multiple of
-  your genuine peak, not a generous ceiling. A cap that never fires legitimately
-  is a cap that's too high to help.
+- **Keep the caps low, then watch them.** `MAX_SUBMISSIONS_PER_HOUR` should be a
+  small multiple of your genuine peak, not a generous ceiling — a cap that never
+  fires legitimately is too high to help. But it is a **global** cap, not
+  per-visitor: a burst of real traffic (a launch, a newsletter, a post that does
+  well) can consume it and lock out genuine leads for the rest of the hour. Raise
+  it deliberately before anything that drives traffic, and check the Apps Script
+  execution log afterwards for rate-limit rejections you didn't want.
+- **The rate limiter is best-effort, not a guarantee.** It is built on
+  `CacheService`, which Apps Script may evict early under memory pressure. An
+  evicted counter means a window resets sooner than intended. That is acceptable
+  for this threat model — the token gate and the escaping don't depend on it —
+  but don't treat the cap as a hard ceiling.
 
 ## If it happens again
 

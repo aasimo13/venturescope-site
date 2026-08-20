@@ -1710,6 +1710,11 @@
         // "response blocked" apart from "never left the machine". Treat it as
         // delivered: that matches how this form behaved under mode:'no-cors',
         // and a false failure message costs a real lead.
+        // The cost of this choice: a typo'd or retired FORM_ENDPOINT also lands
+        // here and fails silently for real visitors — no error, no sheet row,
+        // no signal to anyone. Re-run Test Connection in admin.html after every
+        // Apps Script redeploy; that path reads the response properly and is
+        // the only thing that will catch a dead endpoint.
         console.warn('Could not read the form response; assuming delivered.', networkError);
         return { status: 'success', unverified: true };
       }
@@ -1783,7 +1788,7 @@
       submitBtn.disabled = true;
 
       try {
-        await submitToBackend({
+        const result = await submitToBackend({
           formType: 'quick',
           fullName: formData.get('fullName'),
           email: formData.get('email'),
@@ -1796,8 +1801,14 @@
         submitBtn.innerHTML = originalText;
         submitBtn.disabled = false;
 
-        // Show success message
-        alert(getFormConfig().successMessage);
+        // Show success message. When the response was unreadable we cannot
+        // actually confirm delivery, so give them a way to reach us rather
+        // than an unqualified success they might rely on.
+        const config = getFormConfig();
+        alert(result && result.unverified
+          ? `${config.successMessage}\n\nIf you don't hear from us within 24 hours, ` +
+            `please email ${config.contactEmail} directly — we'd rather hear twice than not at all.`
+          : config.successMessage);
 
       } catch (error) {
         console.error('Error submitting form:', error);

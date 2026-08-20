@@ -1,0 +1,45 @@
+name: Security controls
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'google-apps-script*.js'
+      - 'test-security-controls.js'
+      - '*.html'
+      - '.github/workflows/security-controls.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Asserts the exploit shapes from the August 2026 incident stay rejected
+      # by both Apps Script handlers. See SECURITY.md.
+      - name: Abuse-control regression tests
+        run: node test-security-controls.js
+
+      - name: Syntax-check the Apps Script handlers
+        run: |
+          node --check google-apps-script.js
+          node --check google-apps-script-with-resend.js
+
+      # The inline <script> blocks aren't covered by node --check on their own.
+      - name: Syntax-check inline page scripts
+        run: |
+          for f in index.html admin.html; do
+            node -e "
+              const re = /<script>([\s\S]*?)<\/script>/g;
+              const html = require('fs').readFileSync('$f', 'utf8');
+              let m, js = '';
+              while ((m = re.exec(html))) js += m[1] + '\n';
+              new (require('vm').Script)(js, { filename: '$f' });
+              console.log('$f inline script OK');
+            "
+          done
