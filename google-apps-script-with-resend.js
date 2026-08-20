@@ -19,21 +19,27 @@
  * caller supplied. Anyone who knew the /exec URL could send arbitrary email as
  * VentureScope. This version closes that hole with layered controls:
  *
- *   1. Shared-secret token   — rejects payloads that don't carry the token.
+ * These are numbered in the order doPost applies them. Keep the numbering here,
+ * the inline "Layer N" comments, and SECURITY.md in step — under incident
+ * pressure the next person will trust whichever they read first.
+ *
+ *   1. Payload cap           — oversized bodies rejected before parsing.
  *   2. Honeypot field        — silently drops naive bots.
- *   3. Rate limiting         — a global hourly cap plus a per-recipient
- *                              cooldown, so no address can be blasted.
+ *   3. Shared-secret token   — rejects payloads that don't carry the token.
  *   4. Strict validation     — one syntactically valid recipient, nothing else.
- *   5. Output escaping       — every caller-supplied value is HTML-escaped and
+ *   5. Rate limiting         — a global hourly cap plus a per-recipient
+ *                              cooldown, so no address can be blasted.
+ *   6. Output escaping       — every caller-supplied value is HTML-escaped and
  *                              length-capped, so no markup, links, or scripts
  *                              can be injected into an outgoing email.
- *   6. Kill switch           — CONFIG.EMAILS_ENABLED = false stops all sending
- *                              without needing a redeploy of the website.
  *
- * Be honest about layer 1: the token ships inside a public web page, so it is
+ * Plus a kill switch that is not a layer: CONFIG.EMAILS_ENABLED = false stops
+ * all sending without needing a redeploy of the website.
+ *
+ * Be honest about layer 3: the token ships inside a public web page, so it is
  * not a true secret. It stops drive-by and replayed automated abuse, which is
  * the bulk of it. The controls that hold up against someone who reads your page
- * source are the rate limits (3) and the escaping (5) — those cap both the
+ * source are the rate limits (5) and the escaping (6) — those cap both the
  * volume and the value of any abuse. Rotate the token if you see it being used.
  *
  * SETUP INSTRUCTIONS
@@ -122,9 +128,9 @@ function doPost(e) {
       return jsonResponse({ status: 'error', message: 'Bad request' });
     }
 
-    // A processing cap, not a bandwidth one: Apps Script has already buffered
-    // the whole body by the time this runs, so it bounds the work we do on a
-    // huge payload, not the bytes spent receiving it.
+    // Layer 1: payload cap. A processing cap, not a bandwidth one — Apps Script
+    // has already buffered the whole body by the time this runs, so it bounds
+    // the work we do on a huge payload, not the bytes spent receiving it.
     if (e.postData.contents.length > CONFIG.MAX_PAYLOAD_CHARS) {
       Logger.log('Rejected: payload exceeds MAX_PAYLOAD_CHARS.');
       return jsonResponse({ status: 'error', message: 'Payload too large' });
@@ -148,7 +154,7 @@ function doPost(e) {
       return jsonResponse({ status: 'success', message: 'Form submitted successfully' });
     }
 
-    // Layer 1: shared-secret token. Fails closed if the property is unset.
+    // Layer 3: shared-secret token. Fails closed if the property is unset.
     if (!verifyToken(data.token)) {
       Logger.log('Rejected: missing or invalid token.');
       return jsonResponse({ status: 'error', message: 'Unauthorized' });
@@ -165,7 +171,7 @@ function doPost(e) {
       return jsonResponse({ status: 'error', message: 'A valid email address is required' });
     }
 
-    // Layer 3: rate limits.
+    // Layer 5: rate limits.
     const gate = checkRateLimits(recipient);
     if (!gate.ok) {
       Logger.log('Rejected by rate limit: ' + gate.reason);

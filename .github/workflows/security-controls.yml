@@ -39,11 +39,15 @@ jobs:
       # cover rather than inferring that it covers everything.
       - name: Reminder — checks CI cannot run
         run: |
-          echo "::warning title=Manual pre-deploy step::CI cannot exercise the"\
-               "rate limiter (CacheService/LockService), the Sheets writes, or"\
-               "the live Resend call. Before deploying either Apps Script"\
-               "handler, run testSecurityControls() and testSetup() from the"\
-               "Apps Script editor and read the execution log. See SECURITY.md."
+          echo "::warning title=Green here does not mean deployable::These"\
+               "tests prove the building blocks work in isolation. They do NOT"\
+               "exercise doPost's control flow — the order honeypot, token,"\
+               "validation and rate limiting are actually applied in — nor the"\
+               "rate limiter itself (CacheService/LockService), the Sheets"\
+               "writes, or the live Resend call. Before deploying either Apps"\
+               "Script handler, run testSecurityControls() and testSetup() from"\
+               "the Apps Script editor and read the execution log. See"\
+               "SECURITY.md."
 
       # The inline <script> blocks aren't covered by node --check on their own.
       - name: Syntax-check inline page scripts

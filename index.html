@@ -1602,6 +1602,9 @@
           <p style="color: rgba(255, 255, 255, 0.8); font-size: 0.875rem;">
             Check your email (including spam folder) for a confirmation message.
           </p>
+          <!-- Shown only when the browser could not read the server's reply, so
+               we cannot actually confirm the submission landed. -->
+          <p id="formSuccessUnverified" style="display: none; color: rgba(255, 255, 255, 0.8); font-size: 0.875rem; margin-top: 1rem;"></p>
           <button onclick="resetForm()" class="btn btn-secondary" style="margin-top: 2rem;">
             Submit Another Request
           </button>
@@ -1954,7 +1957,7 @@
       submitBtn.disabled = true;
 
       try {
-        await submitToBackend({
+        const result = await submitToBackend({
           formType: 'intake',
           fullName: formData.get('fullName'),
           workEmail: formData.get('workEmail'),
@@ -1973,7 +1976,19 @@
           hp_company_url: formData.get('hp_company_url')
         });
 
-        // Hide form, show success message
+        // Hide form, show success message. Same reasoning as the quick form:
+        // when the response was unreadable we cannot confirm delivery, so give
+        // them a way to reach us rather than an unqualified success.
+        const unverifiedNote = document.getElementById('formSuccessUnverified');
+        if (result && result.unverified) {
+          unverifiedNote.textContent =
+            `If you don't hear from us within 24 hours, please email ` +
+            `${getFormConfig().contactEmail} directly — we'd rather hear twice than not at all.`;
+          unverifiedNote.style.display = 'block';
+        } else {
+          unverifiedNote.style.display = 'none';
+        }
+
         document.querySelector('.intake-form').style.display = 'none';
         document.getElementById('formStepsIndicator').style.display = 'none';
         document.getElementById('formSuccess').classList.add('active');
@@ -1993,6 +2008,7 @@
       currentStep = 1;
 
       // Hide success, show form
+      document.getElementById('formSuccessUnverified').style.display = 'none';
       document.getElementById('formSuccess').classList.remove('active');
       document.querySelector('.intake-form').style.display = 'block';
       document.getElementById('formStepsIndicator').style.display = 'flex';

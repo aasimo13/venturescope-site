@@ -91,6 +91,13 @@ are rejected — script tags, attribute breaks, link injection, `javascript:` an
 `data:` URLs, multi-recipient and display-name addresses, subject-line CRLF, and
 spreadsheet formula injection. It exits non-zero on failure, so it can gate CI.
 
+What it does **not** prove: that those blocks are wired together correctly. The
+order `doPost` applies them in — honeypot, then token, then validation, then
+rate limiting — is not exercised anywhere in CI, because that path needs
+`SpreadsheetApp` and `CacheService`. A green check means the parts work, not
+that the endpoint is safe to deploy. Don't cite it as though it means the
+latter.
+
 Then, in the Apps Script editor, run `testSecurityControls()` and `testSetup()`
 and read the execution log. Those cover what node cannot: `PropertiesService`,
 `CacheService`, `LockService`, `SpreadsheetApp` and the live Resend call. There is
