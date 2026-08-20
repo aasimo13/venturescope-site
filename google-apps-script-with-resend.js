@@ -209,6 +209,15 @@ function doPost(e) {
       // cooldown for our failure. The global hourly counter is deliberately
       // NOT released: refunding it on error would let anyone who can force an
       // error hammer the endpoint without ever consuming the cap.
+      //
+      // INVARIANT this relies on: nothing inside the handlers throws after a
+      // confirmation has actually been sent. Today that holds because the only
+      // throwing call is the Sheets write, which runs first, and
+      // sendEmailViaResend swallows its own errors and returns false. If you
+      // add a throwing call after the send, this refund would hand back a
+      // cooldown for an address that already received real mail, permitting an
+      // immediate duplicate — move the release behind a "did we send?" check
+      // rather than leaving it unconditional.
       releaseRecipientCooldown(recipient, formType);
       throw handlerError;
     }
