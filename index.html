@@ -345,6 +345,16 @@
       margin-bottom: 1rem;
     }
 
+    /* Honeypot — kept out of the layout, out of the tab order, and out of
+       the accessibility tree. Only a bot filling every input will touch it. */
+    .hp-field {
+      position: absolute;
+      left: -9999px;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+    }
+
     .form-group {
       display: flex;
       flex-direction: column;
@@ -1080,7 +1090,7 @@
 
           <div class="form-group">
             <label for="quick-name">Your Name *</label>
-            <input type="text" id="quick-name" name="name" placeholder="John Doe" required>
+            <input type="text" id="quick-name" name="fullName" placeholder="John Doe" required>
             <span class="form-error">Please enter your name</span>
           </div>
 
@@ -1100,6 +1110,12 @@
               <option value="consultation">Free Consultation</option>
             </select>
             <span class="form-error">Please select a service</span>
+          </div>
+
+          <!-- Honeypot: hidden from humans, filled in by naive bots. Server drops any submission where this is non-empty. -->
+          <div class="hp-field" aria-hidden="true">
+            <label for="quick-hp">Company URL</label>
+            <input type="text" id="quick-hp" name="hp_company_url" tabindex="-1" autocomplete="off">
           </div>
 
           <button type="submit" class="btn btn-gradient btn-block btn-lg">
@@ -1558,6 +1574,12 @@
               <span class="form-error">Please agree to the terms</span>
             </div>
 
+            <!-- Honeypot: hidden from humans, filled in by naive bots. Server drops any submission where this is non-empty. -->
+            <div class="hp-field" aria-hidden="true">
+              <label for="intake-hp">Company URL</label>
+              <input type="text" id="intake-hp" name="hp_company_url" tabindex="-1" autocomplete="off">
+            </div>
+
             <div class="form-navigation">
               <button type="button" class="btn btn-secondary" onclick="prevStep()">← Previous</button>
               <button type="submit" class="btn btn-gradient" id="submitBtn">
@@ -1641,6 +1663,61 @@
 
   <!-- JavaScript -->
   <script>
+    // ============================================================
+    // FORM BACKEND CONFIGURATION
+    // ============================================================
+    // FORM_ENDPOINT is the Google Apps Script web-app URL (.../exec).
+    // FORM_TOKEN must match the FORM_SHARED_SECRET script property on that
+    // deployment — run generateSharedSecret() in the Apps Script editor to
+    // mint one. The token is visible in this page's source, so it is not a
+    // real secret: it filters out automated abuse, while the server-side
+    // rate limits and output escaping are what bound the damage.
+    // Both values can be overridden per-browser from the admin panel.
+    const FORM_ENDPOINT = '';
+    const FORM_TOKEN = '';
+
+    function getFormConfig() {
+      const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
+      return {
+        endpoint: settings.googleScriptUrl || FORM_ENDPOINT,
+        token: settings.formToken || FORM_TOKEN,
+        contactEmail: settings.contactEmail || 'hello@venturescope.systems',
+        successMessage: settings.successMessage || 'Thank you! We\'ll be in touch within 24 hours.'
+      };
+    }
+
+    // Apps Script does not answer CORS preflights, so we send the JSON body
+    // as text/plain (a CORS-simple content type). e.postData.contents on the
+    // server is identical either way, but this keeps the response readable,
+    // which is what lets us surface real rejections to the visitor.
+    async function submitToBackend(payload) {
+      const config = getFormConfig();
+
+      if (!config.endpoint || !config.token) {
+        throw new Error('Form backend is not configured. Please contact the site administrator.');
+      }
+
+      const response = await fetch(config.endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(Object.assign({ token: config.token }, payload))
+      });
+
+      let result = null;
+      try {
+        result = await response.json();
+      } catch (parseError) {
+        // Opaque or non-JSON response — treat as delivered rather than
+        // scaring off a visitor whose submission probably landed.
+        return { status: 'success' };
+      }
+
+      if (result && result.status === 'error') {
+        throw new Error(result.message || 'Submission failed');
+      }
+      return result;
+    }
+
     // Navigation scroll effect
     const nav = document.getElementById('nav');
     const mobileMenuToggle = document.getElementById('mobileMenuToggle');
@@ -1695,32 +1772,12 @@
       submitBtn.disabled = true;
 
       try {
-        // Get settings from admin panel (localStorage)
-        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
-        const GOOGLE_APPS_SCRIPT_URL = settings.googleScriptUrl || '';
-        const successMessage = settings.successMessage || 'Thank you! We\'ll be in touch within 24 hours.';
-        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
-
-        if (!GOOGLE_APPS_SCRIPT_URL) {
-          throw new Error('Google Sheets integration not configured. Please contact the site administrator.');
-        }
-
-        // Prepare data for submission
-        const submissionData = {
+        await submitToBackend({
           formType: 'quick',
           fullName: formData.get('fullName'),
           email: formData.get('email'),
-          service: formData.get('service')
-        };
-
-        // Submit to Google Sheets
-        const response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
-          method: 'POST',
-          mode: 'no-cors', // Required for Google Apps Script
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(submissionData)
+          service: formData.get('service'),
+          hp_company_url: formData.get('hp_company_url')
         });
 
         // Reset form
@@ -1729,15 +1786,14 @@
         submitBtn.disabled = false;
 
         // Show success message
-        alert(successMessage);
+        alert(getFormConfig().successMessage);
 
       } catch (error) {
         console.error('Error submitting form:', error);
         submitBtn.innerHTML = originalText;
         submitBtn.disabled = false;
-        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
-        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
-        alert(`There was an error submitting your request. Please try again or email us directly at ${contactEmail}`);
+        const contactEmail = getFormConfig().contactEmail;
+        alert(`${error.message}\n\nIf this keeps happening, email us directly at ${contactEmail}`);
       }
     });
 
@@ -1876,17 +1932,7 @@
       submitBtn.disabled = true;
 
       try {
-        // Get settings from admin panel (localStorage)
-        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
-        const GOOGLE_APPS_SCRIPT_URL = settings.googleScriptUrl || '';
-        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
-
-        if (!GOOGLE_APPS_SCRIPT_URL) {
-          throw new Error('Google Sheets integration not configured. Please contact the site administrator.');
-        }
-
-        // Prepare data for submission
-        const submissionData = {
+        await submitToBackend({
           formType: 'intake',
           fullName: formData.get('fullName'),
           workEmail: formData.get('workEmail'),
@@ -1901,17 +1947,8 @@
           painPoints: formData.get('painPoints'),
           startDate: formData.get('startDate'),
           budgetRange: formData.get('budgetRange'),
-          hearAbout: formData.get('hearAbout')
-        };
-
-        // Submit to Google Sheets
-        const response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
-          method: 'POST',
-          mode: 'no-cors', // Required for Google Apps Script
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(submissionData)
+          hearAbout: formData.get('hearAbout'),
+          hp_company_url: formData.get('hp_company_url')
         });
 
         // Hide form, show success message
@@ -1921,9 +1958,8 @@
 
       } catch (error) {
         console.error('Error submitting form:', error);
-        const settings = JSON.parse(localStorage.getItem('vsSettings') || '{}');
-        const contactEmail = settings.contactEmail || 'hello@venturescope.systems';
-        alert(`There was an error submitting your request. Please try again or email us directly at ${contactEmail}`);
+        const contactEmail = getFormConfig().contactEmail;
+        alert(`${error.message}\n\nIf this keeps happening, email us directly at ${contactEmail}`);
         submitBtn.innerHTML = originalText;
         submitBtn.disabled = false;
       }

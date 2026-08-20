@@ -1,21 +1,29 @@
 # Resend Email Integration Setup
 
-Your VentureScope site now sends beautiful confirmation emails automatically! 📧
+Your VentureScope site sends confirmation emails through Resend. 📧
 
-## 🔐 Security First: Regenerate Your API Key
+> ### ⚠️ Read `SECURITY.md` first
+>
+> The first version of this integration was an **open email relay** — an
+> unauthenticated endpoint that sent email to any address, with any content, that
+> a caller supplied. It was abused to send phishing. The current script closes
+> that hole, but only if you complete **every** step below, including the shared
+> secret. The script rejects all submissions until `FORM_SHARED_SECRET` is set.
 
-Since you shared your API key in chat, let's secure it:
+## 🔐 Security First: Rotate Your Credentials
 
-### Step 1: Regenerate API Key (Recommended)
+Do this before anything else, and do it again any time a key may have been seen.
+
+### Step 1: Regenerate your Resend API key
 
 1. Go to https://resend.com/api-keys
-2. Find your existing API key
-3. Click **Delete** or **Revoke**
-4. Click **Create API Key**
-5. Name it: "VentureScope Production"
-6. Copy the new key
+2. **Delete or revoke every existing key** — not just the one you think leaked
+3. Click **Create API Key**, name it "VentureScope Production"
+4. Copy the new key. You'll paste it into Script Properties in Step 3.
 
-**Important:** Save the new key somewhere safe - we'll use it in Step 3.
+Never paste a key into this repo, a commit, an issue, or a chat. This repository
+is public, and bots scrape GitHub's public event feed for `re_…` strings within
+seconds of a push. Revoking after the fact does not undo the harvest.
 
 ---
 
@@ -29,38 +37,69 @@ Since you shared your API key in chat, let's secure it:
 4. **Copy the new script** from `google-apps-script-with-resend.js` (in your repo)
 5. **Paste it** into the Apps Script editor
 
-### Step 3: Configure Settings (IMPORTANT!)
+### Step 3: Set your Script Properties (REQUIRED)
 
-In the script, update the `CONFIG` section at the top:
+Secrets never go in the script file. In the Apps Script editor:
+
+**Project Settings** (gear icon) → **Script Properties** → **Add script property**
+
+Add both of these:
+
+| Property | Value |
+|---|---|
+| `RESEND_API_KEY` | The new key from Step 1 |
+| `FORM_SHARED_SECRET` | A random string — see below |
+
+To mint the shared secret: in the Apps Script editor, select the
+`generateSharedSecret` function and click **Run**. Open **Execution log** and copy
+the value it prints. Paste it into `FORM_SHARED_SECRET`, then paste the **same
+value** into `FORM_TOKEN` near the top of `index.html` (or into the Form Shared
+Token field in `admin.html`).
+
+> The script refuses every submission while `FORM_SHARED_SECRET` is unset. That is
+> deliberate — a misconfigured deployment should accept nothing, not everything.
+
+Then update the plain settings in the `CONFIG` block at the top of the script:
 
 ```javascript
 const CONFIG = {
-  // YOUR NEW RESEND API KEY (from Step 1)
-  RESEND_API_KEY: 're_YOUR_NEW_KEY_HERE',
+  // Secrets are read from Script Properties — nothing to edit on these two lines
+  RESEND_API_KEY: PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY'),
+  FORM_SHARED_SECRET: PropertiesService.getScriptProperties().getProperty('FORM_SHARED_SECRET'),
 
-  // Email Settings
   FROM_EMAIL: 'onboarding@resend.dev', // See Step 4 below
   FROM_NAME: 'VentureScope Systems',
 
-  // WHERE YOU WANT TO RECEIVE NOTIFICATIONS
   NOTIFICATION_EMAIL: 'your-email@example.com', // UPDATE THIS!
 
-  // Enable/Disable Features
-  SEND_CONFIRMATION_EMAILS: true,  // Emails to customers
-  SEND_NOTIFICATION_EMAILS: true,  // Emails to you
+  EMAILS_ENABLED: true,            // Kill switch — set false to stop all sending
+  SEND_CONFIRMATION_EMAILS: true,
+  SEND_NOTIFICATION_EMAILS: true,
 
-  // Company Info
+  MAX_SUBMISSIONS_PER_HOUR: 20,    // Global cap — tune to your real traffic
+  RECIPIENT_COOLDOWN_MINUTES: 60,  // One confirmation per address per window
+
   COMPANY_NAME: 'VentureScope Systems',
   WEBSITE_URL: 'https://aasimo13.github.io/venturescope-site/',
   SUPPORT_EMAIL: 'hello@venturescope.systems' // UPDATE THIS!
 };
 ```
 
-**What to Update:**
-- ✅ `RESEND_API_KEY` - Your NEW API key from Step 1
-- ✅ `NOTIFICATION_EMAIL` - Your email (where YOU want notifications)
-- ✅ `SUPPORT_EMAIL` - Email customers can reply to
-- ⚠️ `FROM_EMAIL` - See Step 4 below
+**What to update:**
+- ✅ `NOTIFICATION_EMAIL` — where YOU want notifications
+- ✅ `SUPPORT_EMAIL` — email customers can reply to
+- ✅ `MAX_SUBMISSIONS_PER_HOUR` — set this to a small multiple of your genuine
+  peak. A cap that never fires legitimately is set too high to be useful.
+- ⚠️ `FROM_EMAIL` — see Step 4 below
+
+### Step 3b: Verify the controls actually work
+
+In the Apps Script editor, run `testSecurityControls()` and check the execution
+log. Every line should read `PASS`. It exercises script-tag injection, link
+injection, `javascript:` and `data:` URLs, multi-recipient addresses, subject-line
+newlines, and spreadsheet formula injection.
+
+Then run `testSetup()` to confirm both script properties are visible to the script.
 
 ### Step 4: Verify Your Domain in Resend (Optional but Recommended)
 

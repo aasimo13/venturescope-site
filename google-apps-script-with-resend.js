@@ -1,8 +1,34 @@
 /**
  * Google Apps Script for VentureScope Form Submissions
- * WITH RESEND EMAIL INTEGRATION
+ * WITH RESEND EMAIL INTEGRATION — HARDENED
  *
- * SETUP INSTRUCTIONS:
+ * SECURITY NOTE — READ THIS FIRST
+ * --------------------------------
+ * An earlier version of this script was an open email relay: it accepted
+ * unauthenticated POSTs and then sent HTML email, using the site's Resend
+ * account, to whatever address the caller supplied, with whatever content the
+ * caller supplied. Anyone who knew the /exec URL could send arbitrary email as
+ * VentureScope. This version closes that hole with layered controls:
+ *
+ *   1. Shared-secret token   — rejects payloads that don't carry the token.
+ *   2. Honeypot field        — silently drops naive bots.
+ *   3. Rate limiting         — a global hourly cap plus a per-recipient
+ *                              cooldown, so no address can be blasted.
+ *   4. Strict validation     — one syntactically valid recipient, nothing else.
+ *   5. Output escaping       — every caller-supplied value is HTML-escaped and
+ *                              length-capped, so no markup, links, or scripts
+ *                              can be injected into an outgoing email.
+ *   6. Kill switch           — CONFIG.EMAILS_ENABLED = false stops all sending
+ *                              without needing a redeploy of the website.
+ *
+ * Be honest about layer 1: the token ships inside a public web page, so it is
+ * not a true secret. It stops drive-by and replayed automated abuse, which is
+ * the bulk of it. The controls that hold up against someone who reads your page
+ * source are the rate limits (3) and the escaping (5) — those cap both the
+ * volume and the value of any abuse. Rotate the token if you see it being used.
+ *
+ * SETUP INSTRUCTIONS
+ * ------------------
  *
  * 1. Create a new Google Sheet:
  *    - Go to https://sheets.google.com
@@ -16,18 +42,26 @@
  *    - Update the CONFIGURATION section below with your details
  *    - Save the project (Ctrl+S / Cmd+S)
  *
- * 3. Deploy as Web App:
+ * 3. Set BOTH Script Properties (Project Settings > Script Properties).
+ *    The script refuses every submission until both exist:
+ *      - RESEND_API_KEY     your Resend API key (starts with "re_")
+ *      - FORM_SHARED_SECRET a random string; run generateSharedSecret() below
+ *                           to produce one, then paste the same value into
+ *                           index.html's FORM_TOKEN (or the admin panel).
+ *
+ * 4. Deploy as Web App:
  *    - Click the "Deploy" button (top right)
  *    - Select "New deployment"
  *    - Click the gear icon next to "Select type" and choose "Web app"
  *    - Description: "VentureScope Form Handler with Resend"
  *    - Execute as: "Me"
- *    - Who has access: "Anyone"
+ *    - Who has access: "Anyone"   <-- required for a public form; the token and
+ *      rate limits above are what make this safe, not the access setting.
  *    - Click "Deploy"
  *    - Copy the Web App URL (you'll need this for your website)
  *
- * 4. Update Your Website:
- *    - Go to admin.html and paste your Web App URL
+ * 5. Update Your Website:
+ *    - Set FORM_ENDPOINT and FORM_TOKEN in index.html (or via admin.html).
  */
 
 // ============================================
@@ -35,11 +69,10 @@
 // ============================================
 
 const CONFIG = {
-  // Your Resend API Key — read from Script Properties, never hardcoded.
-  // The repo owner must set this once in Apps Script:
-  //   Project Settings > Script Properties > add key "RESEND_API_KEY" with your Resend key.
-  // (See RESEND-EMAIL-SETUP.md, "Super Secure Setup", for details.)
+  // Secrets live in Script Properties, never in this file.
+  // Project Settings > Script Properties.
   RESEND_API_KEY: PropertiesService.getScriptProperties().getProperty('RESEND_API_KEY'),
+  FORM_SHARED_SECRET: PropertiesService.getScriptProperties().getProperty('FORM_SHARED_SECRET'),
 
   // Email Settings
   FROM_EMAIL: 'onboarding@resend.dev', // Update with your verified domain in Resend
@@ -49,8 +82,16 @@ const CONFIG = {
   NOTIFICATION_EMAIL: 'hello@venturescope.systems', // UPDATE THIS!
 
   // Enable/Disable Features
+  EMAILS_ENABLED: true,            // Master kill switch — set false to stop ALL sending
   SEND_CONFIRMATION_EMAILS: true,  // Send emails to customers
   SEND_NOTIFICATION_EMAILS: true,  // Send emails to business owner
+
+  // Abuse limits — tune these to your real traffic. Lower is safer.
+  MAX_SUBMISSIONS_PER_HOUR: 20,    // Global cap across all visitors
+  RECIPIENT_COOLDOWN_MINUTES: 60,  // One confirmation per address per window
+  MAX_FIELD_LENGTH: 500,           // Cap on ordinary fields
+  MAX_LONGTEXT_LENGTH: 2000,       // Cap on free-text fields
+  MAX_PAYLOAD_BYTES: 50000,        // Reject oversized POST bodies outright
 
   // Company Info
   COMPANY_NAME: 'VentureScope Systems',
@@ -62,43 +103,245 @@ const CONFIG = {
 // MAIN HANDLER
 // ============================================
 
+function doGet() {
+  return jsonResponse({ status: 'error', message: 'Method not allowed' });
+}
+
 function doPost(e) {
   try {
-    const data = JSON.parse(e.postData.contents);
-    const formType = data.formType;
-
-    // Get the active spreadsheet
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-    // Route to appropriate handler
-    if (formType === 'quick') {
-      handleQuickForm(ss, data);
-    } else if (formType === 'intake') {
-      handleIntakeForm(ss, data);
+    if (!e || !e.postData || !e.postData.contents) {
+      return jsonResponse({ status: 'error', message: 'Bad request' });
     }
 
-    // Return success response
-    return ContentService.createTextOutput(JSON.stringify({
-      'status': 'success',
-      'message': 'Form submitted successfully'
-    }))
-    .setMimeType(ContentService.MimeType.JSON);
+    if (e.postData.contents.length > CONFIG.MAX_PAYLOAD_BYTES) {
+      Logger.log('Rejected: payload exceeds MAX_PAYLOAD_BYTES.');
+      return jsonResponse({ status: 'error', message: 'Payload too large' });
+    }
+
+    let data;
+    try {
+      data = JSON.parse(e.postData.contents);
+    } catch (parseError) {
+      return jsonResponse({ status: 'error', message: 'Bad request' });
+    }
+
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return jsonResponse({ status: 'error', message: 'Bad request' });
+    }
+
+    // Layer 2: honeypot. A real browser leaves this hidden field empty.
+    // Answer with success so bots record a win and don't retry.
+    if (String(data.hp_company_url || '').trim() !== '') {
+      Logger.log('Honeypot triggered — dropping submission.');
+      return jsonResponse({ status: 'success', message: 'Form submitted successfully' });
+    }
+
+    // Layer 1: shared-secret token. Fails closed if the property is unset.
+    if (!verifyToken(data.token)) {
+      Logger.log('Rejected: missing or invalid token.');
+      return jsonResponse({ status: 'error', message: 'Unauthorized' });
+    }
+
+    const formType = data.formType;
+    if (formType !== 'quick' && formType !== 'intake') {
+      return jsonResponse({ status: 'error', message: 'Unknown form type' });
+    }
+
+    // Layer 4: exactly one syntactically valid recipient, or nothing happens.
+    const recipient = normalizeEmail(formType === 'quick' ? data.email : data.workEmail);
+    if (!isValidEmail(recipient)) {
+      return jsonResponse({ status: 'error', message: 'A valid email address is required' });
+    }
+
+    // Layer 3: rate limits.
+    const gate = checkRateLimits(recipient);
+    if (!gate.ok) {
+      Logger.log('Rejected by rate limit: ' + gate.reason);
+      return jsonResponse({ status: 'error', message: gate.message });
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (formType === 'quick') {
+      handleQuickForm(ss, data, recipient);
+    } else {
+      handleIntakeForm(ss, data, recipient);
+    }
+
+    return jsonResponse({ status: 'success', message: 'Form submitted successfully' });
 
   } catch (error) {
     Logger.log('Error in doPost: ' + error.toString());
-    return ContentService.createTextOutput(JSON.stringify({
-      'status': 'error',
-      'message': error.toString()
-    }))
-    .setMimeType(ContentService.MimeType.JSON);
+    // Never echo the internal error back to the caller.
+    return jsonResponse({ status: 'error', message: 'Submission failed' });
   }
+}
+
+function jsonResponse(body) {
+  return ContentService.createTextOutput(JSON.stringify(body))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ============================================
+// SECURITY HELPERS
+// ============================================
+
+/**
+ * Compares the caller's token against FORM_SHARED_SECRET in constant time.
+ * Returns false when the property is unset, so a misconfigured deployment
+ * accepts nothing rather than everything.
+ */
+function verifyToken(provided) {
+  const expected = CONFIG.FORM_SHARED_SECRET;
+
+  if (!expected) {
+    Logger.log('FORM_SHARED_SECRET is not set — refusing all submissions.');
+    return false;
+  }
+
+  const got = String(provided == null ? '' : provided);
+  if (got.length !== expected.length) return false;
+
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Global hourly cap plus a per-recipient cooldown, serialized with a script
+ * lock so concurrent requests can't race past the counter.
+ */
+function checkRateLimits(recipient) {
+  const cache = CacheService.getScriptCache();
+  const lock = LockService.getScriptLock();
+
+  try {
+    lock.waitLock(5000);
+  } catch (lockError) {
+    return { ok: false, reason: 'lock timeout', message: 'Server busy, please try again in a moment.' };
+  }
+
+  try {
+    // Hash the address so we aren't storing raw emails in the cache.
+    const recipientKey = 'vs_recipient_' + Utilities.base64EncodeWebSafe(
+      Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, recipient)
+    );
+
+    if (cache.get(recipientKey)) {
+      return {
+        ok: false,
+        reason: 'recipient cooldown for ' + recipient,
+        message: 'We already have a recent request from this address — we\'ll be in touch shortly.'
+      };
+    }
+
+    const hourBucket = Math.floor(new Date().getTime() / (60 * 60 * 1000));
+    const globalKey = 'vs_global_' + hourBucket;
+    const count = parseInt(cache.get(globalKey) || '0', 10);
+
+    if (count >= CONFIG.MAX_SUBMISSIONS_PER_HOUR) {
+      return {
+        ok: false,
+        reason: 'global hourly cap reached (' + count + ')',
+        message: 'Too many requests right now. Please try again later or email us directly.'
+      };
+    }
+
+    cache.put(globalKey, String(count + 1), 3600);
+    cache.put(recipientKey, '1', CONFIG.RECIPIENT_COOLDOWN_MINUTES * 60);
+
+    return { ok: true };
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function normalizeEmail(value) {
+  return String(value == null ? '' : value).trim().toLowerCase();
+}
+
+/**
+ * Deliberately strict. Rejecting commas, semicolons, angle brackets and
+ * whitespace means a single field can never expand into multiple recipients
+ * or a display-name header.
+ */
+function isValidEmail(email) {
+  if (!email || email.length > 254) return false;
+  return /^[^\s@,;:<>"'\\]+@[^\s@,;:<>"'\\]+\.[A-Za-z]{2,}$/.test(email);
+}
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Trims, strips control characters, and caps length. Plain text — no escaping. */
+function plainText(value, maxLength) {
+  const limit = maxLength || CONFIG.MAX_FIELD_LENGTH;
+  const raw = String(value == null ? '' : value)
+    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return raw.length > limit ? raw.slice(0, limit) + '…' : raw;
+}
+
+/** Single-line value, safe to drop into an HTML email body. */
+function safeField(value, maxLength) {
+  return escapeHtml(plainText(value, maxLength));
+}
+
+/** Multi-line value: newlines survive as <br>, everything else is escaped. */
+function safeParagraph(value, maxLength) {
+  const limit = maxLength || CONFIG.MAX_LONGTEXT_LENGTH;
+  const raw = String(value == null ? '' : value)
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, ' ')
+    .trim();
+  const capped = raw.length > limit ? raw.slice(0, limit) + '…' : raw;
+  return escapeHtml(capped).replace(/\n/g, '<br>');
+}
+
+/** Subject lines are plain text; newlines are stripped so they can't be split. */
+function safeSubject(value, maxLength) {
+  return String(value == null ? '' : value)
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength || 80);
+}
+
+/**
+ * Only absolute http(s) URLs survive; anything else becomes ''. Blocks
+ * javascript:, data:, and attribute-breaking payloads in href positions.
+ */
+function safeUrl(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (raw.length > 300) return '';
+  if (!/^https?:\/\/[^\s<>"'`]+$/i.test(raw)) return '';
+  return escapeHtml(raw);
+}
+
+/**
+ * Neutralizes spreadsheet formula injection — a cell starting with = + - @
+ * is executed by Sheets when opened.
+ */
+function sheetSafe(value, maxLength) {
+  const v = plainText(value, maxLength);
+  return /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
 }
 
 // ============================================
 // QUICK FORM HANDLER
 // ============================================
 
-function handleQuickForm(ss, data) {
+function handleQuickForm(ss, data, recipient) {
   let sheet = ss.getSheetByName('Quick Forms');
 
   // Create sheet if it doesn't exist
@@ -113,22 +356,29 @@ function handleQuickForm(ss, data) {
     sheet.getRange(1, 1, 1, 4).setFontWeight('bold').setBackground('#dc2626').setFontColor('#ffffff');
   }
 
-  // Add the data
+  // Log to the sheet first, so there is always a trail even if email fails.
   sheet.appendRow([
     new Date(),
-    data.fullName || '',
-    data.email || '',
-    data.service || ''
+    sheetSafe(data.fullName),
+    sheetSafe(recipient),
+    sheetSafe(data.service)
   ]);
 
+  const safe = {
+    fullName: safeField(data.fullName, 100),
+    email: safeField(recipient, 254),
+    service: safeField(data.service, 100),
+    subjectName: safeSubject(data.fullName, 60)
+  };
+
   // Send confirmation email to customer
-  if (CONFIG.SEND_CONFIRMATION_EMAILS && data.email) {
-    sendQuickFormConfirmation(data);
+  if (CONFIG.SEND_CONFIRMATION_EMAILS) {
+    sendQuickFormConfirmation(recipient, safe);
   }
 
   // Send notification to business
   if (CONFIG.SEND_NOTIFICATION_EMAILS) {
-    sendQuickFormNotification(data);
+    sendQuickFormNotification(safe);
   }
 }
 
@@ -136,7 +386,7 @@ function handleQuickForm(ss, data) {
 // INTAKE FORM HANDLER
 // ============================================
 
-function handleIntakeForm(ss, data) {
+function handleIntakeForm(ss, data, recipient) {
   let sheet = ss.getSheetByName('Intake Forms');
 
   // Create sheet if it doesn't exist
@@ -162,33 +412,54 @@ function handleIntakeForm(ss, data) {
     sheet.getRange(1, 1, 1, 15).setFontWeight('bold').setBackground('#dc2626').setFontColor('#ffffff');
   }
 
-  // Add the data
+  // Log to the sheet first, so there is always a trail even if email fails.
   sheet.appendRow([
     new Date(),
-    data.fullName || '',
-    data.workEmail || '',
-    data.phone || '',
-    data.jobTitle || '',
-    data.companyName || '',
-    data.industry || '',
-    data.teamSize || '',
-    data.website || '',
-    data.service || '',
-    data.processDescription || '',
-    data.painPoints || '',
-    data.startDate || '',
-    data.budgetRange || '',
-    data.hearAbout || ''
+    sheetSafe(data.fullName),
+    sheetSafe(recipient),
+    sheetSafe(data.phone, 50),
+    sheetSafe(data.jobTitle),
+    sheetSafe(data.companyName),
+    sheetSafe(data.industry),
+    sheetSafe(data.teamSize),
+    sheetSafe(data.website, 300),
+    sheetSafe(data.service),
+    sheetSafe(data.processDescription, CONFIG.MAX_LONGTEXT_LENGTH),
+    sheetSafe(data.painPoints, CONFIG.MAX_LONGTEXT_LENGTH),
+    sheetSafe(data.startDate, 50),
+    sheetSafe(data.budgetRange, 100),
+    sheetSafe(data.hearAbout, 100)
   ]);
 
+  const websiteUrl = safeUrl(data.website);
+
+  const safe = {
+    fullName: safeField(data.fullName, 100),
+    workEmail: safeField(recipient, 254),
+    phone: safeField(data.phone, 50),
+    jobTitle: safeField(data.jobTitle, 100),
+    companyName: safeField(data.companyName, 150),
+    industry: safeField(data.industry, 100),
+    teamSize: safeField(data.teamSize, 50),
+    websiteUrl: websiteUrl,
+    service: safeField(data.service, 100),
+    processDescription: safeParagraph(data.processDescription),
+    painPoints: safeParagraph(data.painPoints),
+    startDate: safeField(data.startDate, 50),
+    budgetRange: safeField(data.budgetRange, 100),
+    hearAbout: safeField(data.hearAbout, 100),
+    subjectCompany: safeSubject(data.companyName, 60),
+    subjectService: safeSubject(data.service, 40)
+  };
+
   // Send confirmation email to customer
-  if (CONFIG.SEND_CONFIRMATION_EMAILS && data.workEmail) {
-    sendIntakeFormConfirmation(data);
+  if (CONFIG.SEND_CONFIRMATION_EMAILS) {
+    sendIntakeFormConfirmation(recipient, safe);
   }
 
   // Send notification to business
   if (CONFIG.SEND_NOTIFICATION_EMAILS) {
-    sendIntakeFormNotification(data);
+    sendIntakeFormNotification(safe);
   }
 }
 
@@ -197,11 +468,28 @@ function handleIntakeForm(ss, data) {
 // ============================================
 
 function sendEmailViaResend(to, subject, htmlContent, textContent) {
+  if (!CONFIG.EMAILS_ENABLED) {
+    Logger.log('EMAILS_ENABLED is false — skipping send to ' + to);
+    return false;
+  }
+
+  if (!CONFIG.RESEND_API_KEY) {
+    Logger.log('RESEND_API_KEY is not set — skipping send.');
+    return false;
+  }
+
+  // Last line of defense: never hand Resend anything but one valid address.
+  const recipient = normalizeEmail(to);
+  if (!isValidEmail(recipient)) {
+    Logger.log('Refusing to send: invalid recipient address.');
+    return false;
+  }
+
   const url = 'https://api.resend.com/emails';
 
   const payload = {
     from: `${CONFIG.FROM_NAME} <${CONFIG.FROM_EMAIL}>`,
-    to: to,
+    to: recipient,
     subject: subject,
     html: htmlContent,
     text: textContent || htmlContent.replace(/<[^>]*>/g, '') // Strip HTML for text version
@@ -222,15 +510,13 @@ function sendEmailViaResend(to, subject, htmlContent, textContent) {
     const responseCode = response.getResponseCode();
     const responseText = response.getContentText();
 
-    Logger.log(`Resend API Response: ${responseCode} - ${responseText}`);
-
     if (responseCode >= 200 && responseCode < 300) {
       Logger.log('Email sent successfully via Resend');
       return true;
-    } else {
-      Logger.log(`Failed to send email: ${responseText}`);
-      return false;
     }
+
+    Logger.log(`Failed to send email: ${responseCode} - ${responseText}`);
+    return false;
   } catch (error) {
     Logger.log('Error sending email via Resend: ' + error.toString());
     return false;
@@ -241,8 +527,8 @@ function sendEmailViaResend(to, subject, htmlContent, textContent) {
 // QUICK FORM EMAIL TEMPLATES
 // ============================================
 
-function sendQuickFormConfirmation(data) {
-  const subject = `Thanks for reaching out, ${data.fullName}! 🚀`;
+function sendQuickFormConfirmation(recipient, safe) {
+  const subject = `Thanks for reaching out, ${safe.subjectName}! 🚀`;
 
   const html = `
     <!DOCTYPE html>
@@ -264,14 +550,14 @@ function sendQuickFormConfirmation(data) {
           <h1>🎉 We Received Your Request!</h1>
         </div>
         <div class="content">
-          <p>Hi ${data.fullName},</p>
+          <p>Hi ${safe.fullName},</p>
 
           <p>Thank you for reaching out to <strong>${CONFIG.COMPANY_NAME}</strong>! We're excited to help you transform your business operations.</p>
 
           <div class="info-box">
             <h3>📋 What You Requested:</h3>
-            <p><strong>Service:</strong> ${data.service}</p>
-            <p><strong>Email:</strong> ${data.email}</p>
+            <p><strong>Service:</strong> ${safe.service}</p>
+            <p><strong>Email:</strong> ${safe.email}</p>
           </div>
 
           <h3>⏱️ What Happens Next?</h3>
@@ -303,11 +589,11 @@ function sendQuickFormConfirmation(data) {
     </html>
   `;
 
-  sendEmailViaResend(data.email, subject, html);
+  sendEmailViaResend(recipient, subject, html);
 }
 
-function sendQuickFormNotification(data) {
-  const subject = `🔔 New Quick Form Submission from ${data.fullName}`;
+function sendQuickFormNotification(safe) {
+  const subject = `🔔 New Quick Form Submission from ${safe.subjectName}`;
 
   const html = `
     <!DOCTYPE html>
@@ -331,13 +617,13 @@ function sendQuickFormNotification(data) {
           <p><strong>A new potential client has reached out!</strong></p>
 
           <div class="field">
-            <span class="label">Full Name:</span> ${data.fullName}
+            <span class="label">Full Name:</span> ${safe.fullName}
           </div>
           <div class="field">
-            <span class="label">Email:</span> <a href="mailto:${data.email}">${data.email}</a>
+            <span class="label">Email:</span> <a href="mailto:${safe.email}">${safe.email}</a>
           </div>
           <div class="field">
-            <span class="label">Service Interested:</span> ${data.service}
+            <span class="label">Service Interested:</span> ${safe.service}
           </div>
           <div class="field">
             <span class="label">Submitted:</span> ${new Date().toLocaleString()}
@@ -357,8 +643,8 @@ function sendQuickFormNotification(data) {
 // INTAKE FORM EMAIL TEMPLATES
 // ============================================
 
-function sendIntakeFormConfirmation(data) {
-  const subject = `Application Received: ${data.companyName} 🎯`;
+function sendIntakeFormConfirmation(recipient, safe) {
+  const subject = `Application Received: ${safe.subjectCompany} 🎯`;
 
   const html = `
     <!DOCTYPE html>
@@ -382,17 +668,17 @@ function sendIntakeFormConfirmation(data) {
           <h1>✅ Application Received!</h1>
         </div>
         <div class="content">
-          <p>Hi ${data.fullName},</p>
+          <p>Hi ${safe.fullName},</p>
 
-          <p>Thank you for completing our detailed intake form! We've received your application for <strong>${data.companyName}</strong> and are excited about the opportunity to transform your operations.</p>
+          <p>Thank you for completing our detailed intake form! We've received your application for <strong>${safe.companyName}</strong> and are excited about the opportunity to transform your operations.</p>
 
           <div class="info-box">
             <h3>📋 Your Submission Summary:</h3>
-            <p><strong>Company:</strong> ${data.companyName}</p>
-            <p><strong>Industry:</strong> ${data.industry}</p>
-            <p><strong>Service:</strong> ${data.service}</p>
-            <p><strong>Preferred Start Date:</strong> ${data.startDate}</p>
-            ${data.budgetRange ? `<p><strong>Budget Range:</strong> ${data.budgetRange}</p>` : ''}
+            <p><strong>Company:</strong> ${safe.companyName}</p>
+            <p><strong>Industry:</strong> ${safe.industry}</p>
+            <p><strong>Service:</strong> ${safe.service}</p>
+            <p><strong>Preferred Start Date:</strong> ${safe.startDate}</p>
+            ${safe.budgetRange ? `<p><strong>Budget Range:</strong> ${safe.budgetRange}</p>` : ''}
           </div>
 
           <h3>🚀 Your Journey with VentureScope:</h3>
@@ -443,11 +729,11 @@ function sendIntakeFormConfirmation(data) {
     </html>
   `;
 
-  sendEmailViaResend(data.workEmail, subject, html);
+  sendEmailViaResend(recipient, subject, html);
 }
 
-function sendIntakeFormNotification(data) {
-  const subject = `🎯 New Intake Form: ${data.companyName} - ${data.service}`;
+function sendIntakeFormNotification(safe) {
+  const subject = `🎯 New Intake Form: ${safe.subjectCompany} - ${safe.subjectService}`;
 
   const html = `
     <!DOCTYPE html>
@@ -474,48 +760,48 @@ function sendIntakeFormNotification(data) {
           <div class="section">
             <h3>👤 Contact Information</h3>
             <div class="field">
-              <span class="label">Full Name:</span> ${data.fullName}
+              <span class="label">Full Name:</span> ${safe.fullName}
             </div>
             <div class="field">
-              <span class="label">Email:</span> <a href="mailto:${data.workEmail}">${data.workEmail}</a>
+              <span class="label">Email:</span> <a href="mailto:${safe.workEmail}">${safe.workEmail}</a>
             </div>
             <div class="field">
-              <span class="label">Phone:</span> ${data.phone || 'Not provided'}
+              <span class="label">Phone:</span> ${safe.phone || 'Not provided'}
             </div>
             <div class="field">
-              <span class="label">Job Title:</span> ${data.jobTitle}
+              <span class="label">Job Title:</span> ${safe.jobTitle}
             </div>
           </div>
 
           <div class="section">
             <h3>🏢 Company Details</h3>
             <div class="field">
-              <span class="label">Company Name:</span> ${data.companyName}
+              <span class="label">Company Name:</span> ${safe.companyName}
             </div>
             <div class="field">
-              <span class="label">Industry:</span> ${data.industry}
+              <span class="label">Industry:</span> ${safe.industry}
             </div>
             <div class="field">
-              <span class="label">Team Size:</span> ${data.teamSize}
+              <span class="label">Team Size:</span> ${safe.teamSize}
             </div>
             <div class="field">
-              <span class="label">Website:</span> ${data.website ? `<a href="${data.website}">${data.website}</a>` : 'Not provided'}
+              <span class="label">Website:</span> ${safe.websiteUrl ? `<a href="${safe.websiteUrl}">${safe.websiteUrl}</a>` : 'Not provided'}
             </div>
           </div>
 
           <div class="section">
             <h3>💼 Project Information</h3>
             <div class="field">
-              <span class="label">Service:</span> ${data.service}
+              <span class="label">Service:</span> ${safe.service}
             </div>
             <div class="field">
-              <span class="label">Start Date:</span> ${data.startDate}
+              <span class="label">Start Date:</span> ${safe.startDate}
             </div>
             <div class="field">
-              <span class="label">Budget Range:</span> ${data.budgetRange || 'Not specified'}
+              <span class="label">Budget Range:</span> ${safe.budgetRange || 'Not specified'}
             </div>
             <div class="field">
-              <span class="label">How They Found Us:</span> ${data.hearAbout || 'Not specified'}
+              <span class="label">How They Found Us:</span> ${safe.hearAbout || 'Not specified'}
             </div>
           </div>
 
@@ -523,11 +809,11 @@ function sendIntakeFormNotification(data) {
             <h3>📝 Project Details</h3>
             <div class="field">
               <span class="label">Process Description:</span><br>
-              ${data.processDescription}
+              ${safe.processDescription}
             </div>
             <div class="field">
               <span class="label">Pain Points:</span><br>
-              ${data.painPoints}
+              ${safe.painPoints}
             </div>
           </div>
 
@@ -549,19 +835,33 @@ function sendIntakeFormNotification(data) {
 }
 
 // ============================================
-// TEST FUNCTIONS
+// SETUP & TEST FUNCTIONS
 // ============================================
 
-// Run this to test the email functionality
-function testEmailSetup() {
-  const testData = {
-    fullName: 'Test User',
-    email: 'test@example.com',
-    service: 'Test Service'
-  };
+/**
+ * Run this once to mint a shared secret. Copy the logged value into
+ * Script Properties as FORM_SHARED_SECRET, and into index.html's FORM_TOKEN.
+ */
+function generateSharedSecret() {
+  const bytes = [];
+  for (let i = 0; i < 24; i++) {
+    bytes.push(Math.floor(Math.random() * 256));
+  }
+  const secret = Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+  Logger.log('FORM_SHARED_SECRET: ' + secret);
+  Logger.log('Set this in Project Settings > Script Properties, then put the same value in index.html.');
+  return secret;
+}
 
+// Run this to test the email functionality (bypasses the web-app gate on purpose)
+function testEmailSetup() {
   Logger.log('Testing Resend integration...');
-  sendQuickFormConfirmation(testData);
+  sendQuickFormConfirmation('test@example.com', {
+    fullName: safeField('Test User', 100),
+    email: safeField('test@example.com', 254),
+    service: safeField('Test Service', 100),
+    subjectName: safeSubject('Test User', 60)
+  });
   Logger.log('Test email sent! Check your inbox.');
 }
 
@@ -571,5 +871,38 @@ function testSetup() {
   Logger.log('Spreadsheet name: ' + ss.getName());
   Logger.log('Spreadsheet ID: ' + ss.getId());
   Logger.log('Resend API Key configured: ' + (CONFIG.RESEND_API_KEY ? 'Yes' : 'No'));
+  Logger.log('Shared secret configured: ' + (CONFIG.FORM_SHARED_SECRET ? 'Yes' : 'No — ALL SUBMISSIONS WILL BE REJECTED'));
+  Logger.log('Emails enabled: ' + CONFIG.EMAILS_ENABLED);
+  Logger.log('Global cap: ' + CONFIG.MAX_SUBMISSIONS_PER_HOUR + '/hour');
   Logger.log('Setup test completed successfully!');
+}
+
+/**
+ * Verifies the abuse controls actually reject the payload shapes that were
+ * being exploited. Run it from the editor after any change to this file.
+ */
+function testSecurityControls() {
+  const cases = [
+    ['script tag in name', safeField('<script>alert(1)</script>'), function (r) { return r.indexOf('<') === -1; }],
+    ['link injection', safeParagraph('<a href="http://evil">click</a>'), function (r) { return r.indexOf('<a ') === -1; }],
+    ['javascript: url', safeUrl('javascript:alert(1)'), function (r) { return r === ''; }],
+    ['data: url', safeUrl('data:text/html,<script>'), function (r) { return r === ''; }],
+    ['valid url passes', safeUrl('https://example.com/x'), function (r) { return r === 'https://example.com/x'; }],
+    ['multi-recipient', isValidEmail('a@b.com,c@d.com'), function (r) { return r === false; }],
+    ['angle bracket addr', isValidEmail('x <y@z.com>'), function (r) { return r === false; }],
+    ['plain address ok', isValidEmail('someone@example.com'), function (r) { return r === true; }],
+    ['subject newline', safeSubject('Hi\r\nBcc: v@x.com'), function (r) { return r.indexOf('\n') === -1 && r.indexOf('\r') === -1; }],
+    ['formula injection', sheetSafe('=IMPORTXML(1,2)'), function (r) { return r.charAt(0) === "'"; }],
+    ['token fails closed', verifyToken('anything'), function (r) { return CONFIG.FORM_SHARED_SECRET ? true : r === false; }]
+  ];
+
+  let failures = 0;
+  cases.forEach(function (c) {
+    const passed = c[2](c[1]);
+    if (!passed) failures++;
+    Logger.log((passed ? 'PASS  ' : 'FAIL  ') + c[0] + '  ->  ' + c[1]);
+  });
+
+  Logger.log(failures === 0 ? 'All security checks passed.' : failures + ' CHECK(S) FAILED.');
+  return failures === 0;
 }

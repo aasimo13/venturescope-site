@@ -461,6 +461,17 @@
           </div>
 
           <div class="setting-item">
+            <h3>Form Shared Token</h3>
+            <p>
+              Must match the <code>FORM_SHARED_SECRET</code> script property on your Apps Script
+              deployment. Run <code>generateSharedSecret()</code> in the Apps Script editor to mint one.
+              Submissions without a matching token are rejected — this is what stops the endpoint being
+              used as an open email relay.
+            </p>
+            <input type="text" id="formToken" placeholder="Paste the value of FORM_SHARED_SECRET" autocomplete="off">
+          </div>
+
+          <div class="setting-item">
             <h3>Test Connection</h3>
             <p>Verify your Google Sheets integration is working correctly</p>
             <button class="btn-secondary" onclick="testConnection()">Test Connection</button>
@@ -604,9 +615,16 @@
 
       if (settings.googleScriptUrl) {
         document.getElementById('googleScriptUrl').value = settings.googleScriptUrl;
+      }
+
+      if (settings.googleScriptUrl && settings.formToken) {
         document.getElementById('sheetsStatus').textContent = 'Configured';
         document.getElementById('sheetsStatus').classList.remove('not-configured');
         document.getElementById('sheetsStatus').classList.add('configured');
+      }
+
+      if (settings.formToken) {
+        document.getElementById('formToken').value = settings.formToken;
       }
 
       if (settings.successMessage) {
@@ -622,6 +640,7 @@
     function saveSettings() {
       const settings = {
         googleScriptUrl: document.getElementById('googleScriptUrl').value,
+        formToken: document.getElementById('formToken').value.trim(),
         successMessage: document.getElementById('successMessage').value,
         contactEmail: document.getElementById('contactEmail').value,
         lastUpdated: new Date().toISOString()
@@ -634,7 +653,7 @@
       msg.classList.add('show');
 
       // Update status badges
-      if (settings.googleScriptUrl) {
+      if (settings.googleScriptUrl && settings.formToken) {
         document.getElementById('sheetsStatus').textContent = 'Configured';
         document.getElementById('sheetsStatus').classList.remove('not-configured');
         document.getElementById('sheetsStatus').classList.add('configured');
@@ -648,6 +667,7 @@
     // Test Google Sheets connection
     async function testConnection() {
       const url = document.getElementById('googleScriptUrl').value;
+      const token = document.getElementById('formToken').value.trim();
       const resultDiv = document.getElementById('testResult');
 
       if (!url) {
@@ -655,26 +675,40 @@
         return;
       }
 
+      if (!token) {
+        resultDiv.innerHTML = '<div class="error-message show">Please enter the form shared token first — the endpoint rejects submissions without it</div>';
+        return;
+      }
+
       resultDiv.innerHTML = '<p style="color: var(--gray);">Testing connection...</p>';
 
       try {
         const testData = {
+          token: token,
           formType: 'quick',
           fullName: 'Test User',
           email: 'test@example.com',
-          service: 'Test Service'
+          service: 'Test Service',
+          hp_company_url: ''
         };
 
-        await fetch(url, {
+        // text/plain avoids a CORS preflight, which Apps Script cannot answer.
+        // That keeps the response readable so we can report real failures.
+        const response = await fetch(url, {
           method: 'POST',
-          mode: 'no-cors',
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'text/plain;charset=utf-8',
           },
           body: JSON.stringify(testData)
         });
 
-        resultDiv.innerHTML = '<div class="success-message show">✅ Test data sent! Check your Google Sheet to verify it was received.</div>';
+        const result = await response.json();
+
+        if (result.status === 'success') {
+          resultDiv.innerHTML = '<div class="success-message show">✅ Test data accepted! Check your Google Sheet to verify it was received.</div>';
+        } else {
+          resultDiv.innerHTML = `<div class="error-message show">❌ Endpoint rejected the test: ${result.message}</div>`;
+        }
       } catch (error) {
         resultDiv.innerHTML = `<div class="error-message show">❌ Connection failed: ${error.message}</div>`;
       }
