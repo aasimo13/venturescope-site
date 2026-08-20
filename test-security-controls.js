@@ -6,34 +6,75 @@
  *     node test-security-controls.js
  *
  * No dependencies, no build step. The helpers are pure, so they run here once
- * the handful of Apps Script globals they touch at load time are stubbed. This
- * covers the escaping and validation layers only — anything touching
- * PropertiesService, CacheService, LockService, SpreadsheetApp or UrlFetchApp
- * still needs testSecurityControls() run from the Apps Script editor.
+ * the handful of Apps Script globals they touch are stubbed — including enough
+ * of Utilities to exercise verifyToken's real digest comparison, not just its
+ * fail-closed short-circuit.
+ *
+ * Covered here: output escaping, URL and address validation, subject
+ * flattening, formula-injection guarding, the plain-text fallback, and the
+ * token gate in both its unconfigured and configured states.
+ *
+ * NOT covered here, because Apps Script's runtime cannot be simulated: the
+ * rate limiter (CacheService/LockService, including eviction behavior), the
+ * Sheets writes, and the live Resend call. Those need testSecurityControls()
+ * and testSetup() run from the Apps Script editor before every deploy.
  */
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
-global.PropertiesService = { getScriptProperties: () => ({ getProperty: () => null }) };
-global.Logger = { log: () => {} };
+const LOGGER = { log: () => {} };
 
-function loadScript(filename) {
+/**
+ * Enough of the Apps Script Utilities service to exercise verifyToken's real
+ * comparison path. computeDigest returns *signed* bytes in Apps Script, so
+ * match that — verifyToken XORs the two arrays and a sign mismatch would make
+ * a passing test out of a broken compare.
+ */
+const UTILITIES = {
+  DigestAlgorithm: { SHA_256: 'SHA_256' },
+  Charset: { UTF_8: 'UTF_8' },
+  computeDigest(algorithm, value) {
+    const digest = crypto.createHash('sha256').update(String(value), 'utf8').digest();
+    return Array.from(digest).map((b) => (b > 127 ? b - 256 : b));
+  },
+  getUuid: () => crypto.randomUUID(),
+  base64EncodeWebSafe: (bytes) =>
+    Buffer.from(bytes.map((b) => (b < 0 ? b + 256 : b))).toString('base64url')
+};
+
+/**
+ * @param {string} filename       script to load
+ * @param {?string} sharedSecret  value FORM_SHARED_SECRET reads back as; pass
+ *                                null to exercise the unconfigured/fail-closed
+ *                                state.
+ */
+function loadScript(filename, sharedSecret) {
   const source = fs.readFileSync(path.join(__dirname, filename), 'utf8');
+  const properties = {
+    getScriptProperties: () => ({
+      getProperty: (key) => (key === 'FORM_SHARED_SECRET' ? sharedSecret || null : null)
+    })
+  };
   // Each script declares its own top-level CONFIG, so give them separate
   // scopes rather than letting the second redeclare the first.
   return new Function(
-    'PropertiesService', 'Logger',
+    'PropertiesService', 'Logger', 'Utilities',
     source + '\nreturn { verifyToken, isValidEmail, plainText, sheetSafe' +
     (filename.includes('resend')
       ? ', safeField, safeParagraph, safeSubject, safeUrl, htmlToPlainText'
       : '') +
     ' };'
-  )(global.PropertiesService, global.Logger);
+  )(properties, LOGGER, UTILITIES);
 }
 
-const resend = loadScript('google-apps-script-with-resend.js');
-const legacy = loadScript('google-apps-script.js');
+const SECRET = 'a-test-shared-secret-value';
+
+const resend = loadScript('google-apps-script-with-resend.js', null);
+const legacy = loadScript('google-apps-script.js', null);
+const resendConfigured = loadScript('google-apps-script-with-resend.js', SECRET);
+const legacyConfigured = loadScript('google-apps-script.js', SECRET);
 
 const {
   safeField, safeParagraph, safeSubject, safeUrl,
@@ -77,10 +118,21 @@ const cases = [
   ['at prefixed', sheetSafe('@SUM(A1)'), "'@SUM(A1)"],
   ['ordinary text untouched', sheetSafe('Acme Ltd'), 'Acme Ltd'],
 
-  // Token gate — must reject when the secret is unset.
+  // Token gate, unconfigured — must reject everything.
   ['token fails closed', verifyToken('anything'), false],
   ['empty token fails closed', verifyToken(''), false],
   ['null token fails closed', verifyToken(null), false],
+
+  // Token gate, configured — exercises the digest comparison itself, which
+  // the fail-closed cases above short-circuit before ever reaching.
+  ['correct token accepted', resendConfigured.verifyToken(SECRET), true],
+  ['wrong token rejected', resendConfigured.verifyToken('not-the-secret'), false],
+  ['same-length near-miss rejected',
+    resendConfigured.verifyToken(SECRET.slice(0, -1) + 'X'), false],
+  ['prefix rejected', resendConfigured.verifyToken(SECRET.slice(0, 10)), false],
+  ['secret plus suffix rejected', resendConfigured.verifyToken(SECRET + 'x'), false],
+  ['empty rejected when configured', resendConfigured.verifyToken(''), false],
+  ['null rejected when configured', resendConfigured.verifyToken(null), false],
 
   // Plain-text fallback.
   ['block spacing preserved', htmlToPlainText('<p>one</p><p>two</p>'), 'one\ntwo'],
@@ -103,6 +155,13 @@ for (const [name, fn, arg, want] of [
 ]) {
   cases.push([name, legacy[fn](arg), want]);
 }
+
+cases.push(
+  ['legacy: correct token accepted', legacyConfigured.verifyToken(SECRET), true],
+  ['legacy: wrong token rejected', legacyConfigured.verifyToken('not-the-secret'), false],
+  ['legacy: same-length near-miss rejected',
+    legacyConfigured.verifyToken(SECRET.slice(0, -1) + 'X'), false]
+);
 
 let failed = 0;
 for (const [name, got, want] of cases) {

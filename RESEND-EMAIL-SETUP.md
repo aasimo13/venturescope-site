@@ -117,6 +117,18 @@ Then run `testSetup()` to confirm both script properties are visible to the scri
 
 **For Now:** The test domain works fine for testing!
 
+### Step 4b: After every redeploy — re-run Test Connection
+
+Open `admin.html` and click **Test Connection** after any Apps Script redeploy,
+and any time you change `FORM_ENDPOINT`.
+
+This is not optional politeness. The website treats an unreadable response as a
+successful submission, because a browser cannot tell a blocked CORS read apart
+from a dead endpoint — and of the two, delivered is far likelier. The tradeoff
+is that a typo'd or retired endpoint fails **silently** for real visitors: no
+error, no sheet row, no signal to anyone. Test Connection reads the response
+properly and is the only thing that will catch it.
+
 ### Step 5: Save and Redeploy
 
 1. **Save the script** (Ctrl+S / Cmd+S)

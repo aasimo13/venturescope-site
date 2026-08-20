@@ -231,6 +231,11 @@ function plainText(value, maxLength) {
 /**
  * Neutralizes spreadsheet formula injection — a cell starting with = + - @
  * is executed by Sheets when the sheet is opened.
+ *
+ * The \t and \r in the class are unreachable today: plainText() runs first and
+ * collapses all whitespace, so nothing reaches here with a leading tab or
+ * carriage return. They stay because this guard should not silently weaken if
+ * plainText's normalization is ever narrowed.
  */
 function sheetSafe(value, maxLength) {
   const v = plainText(value, maxLength);

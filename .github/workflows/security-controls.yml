@@ -10,6 +10,10 @@ on:
       - '*.html'
       - '.github/workflows/security-controls.yml'
 
+# Runs tests and reads the tree. Nothing here writes.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest

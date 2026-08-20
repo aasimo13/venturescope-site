@@ -97,6 +97,22 @@ and read the execution log. Those cover what node cannot: `PropertiesService`,
 no way to automate that part — if you skip it, nothing will tell you the rate
 limiter or the token gate stopped working.
 
+### Residual risk we are accepting
+
+Any public contact form that sends a confirmation can be used to mail a chosen
+address something that address did not ask for. Ours is now bounded — one
+message per address per `RECIPIENT_COOLDOWN_MINUTES`, inside a global hourly
+cap, with every caller-supplied value escaped and length-capped, sent from our
+own configured `FROM_EMAIL`. It is not zero. Someone can still cause one
+low-volume unsolicited confirmation per hour per address, carrying an
+attacker-chosen name and service inside otherwise fixed template text.
+
+Eliminating that entirely means dropping customer confirmations and notifying
+only our own fixed address — `SEND_CONFIRMATION_EMAILS: false` does exactly
+that, and is the right setting if this is ever abused again. We keep
+confirmations on because they are a real part of the lead flow, and the bounded
+version is a very long way from where this started.
+
 ### The token is not a real secret
 
 `FORM_TOKEN` ships inside a public web page. Anyone who reads the source can
@@ -132,6 +148,12 @@ property and update the page) if you see it being used.
   well) can consume it and lock out genuine leads for the rest of the hour. Raise
   it deliberately before anything that drives traffic, and check the Apps Script
   execution log afterwards for rate-limit rejections you didn't want.
+- **The global cap is the actual abuse ceiling, not the per-recipient one.**
+  Apps Script gives the handler no client IP, so there is nothing to rate limit
+  per source. The per-recipient cooldown is keyed on the caller-supplied
+  address, which means an attacker cycling through many distinct addresses never
+  trips it — only `MAX_SUBMISSIONS_PER_HOUR` bounds them. Set that number as if
+  it were the only limit, because against a determined caller it is.
 - **The rate limiter is best-effort, not a guarantee.** It is built on
   `CacheService`, which Apps Script may evict early under memory pressure. An
   evicted counter means a window resets sooner than intended. That is acceptable
