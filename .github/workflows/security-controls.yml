@@ -34,6 +34,17 @@ jobs:
           node --check google-apps-script.js
           node --check google-apps-script-with-resend.js
 
+      # The riskiest logic is the part CI cannot reach. Say so in the run
+      # output, so a reviewer reading a green check knows what it does not
+      # cover rather than inferring that it covers everything.
+      - name: Reminder — checks CI cannot run
+        run: |
+          echo "::warning title=Manual pre-deploy step::CI cannot exercise the"\
+               "rate limiter (CacheService/LockService), the Sheets writes, or"\
+               "the live Resend call. Before deploying either Apps Script"\
+               "handler, run testSecurityControls() and testSetup() from the"\
+               "Apps Script editor and read the execution log. See SECURITY.md."
+
       # The inline <script> blocks aren't covered by node --check on their own.
       - name: Syntax-check inline page scripts
         run: |

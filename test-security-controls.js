@@ -63,7 +63,8 @@ function loadScript(filename, sharedSecret) {
     'PropertiesService', 'Logger', 'Utilities',
     source + '\nreturn { verifyToken, isValidEmail, plainText, sheetSafe' +
     (filename.includes('resend')
-      ? ', safeField, safeParagraph, safeSubject, safeUrl, htmlToPlainText'
+      ? ', safeField, safeParagraph, safeSubject, safeUrl, htmlToPlainText,' +
+        ' sendingIsConfigured, CONFIG'
       : '') +
     ' };'
   )(properties, LOGGER, UTILITIES);
@@ -162,6 +163,21 @@ cases.push(
   ['legacy: same-length near-miss rejected',
     legacyConfigured.verifyToken(SECRET.slice(0, -1) + 'X'), false]
 );
+
+// A failed send refunds the per-recipient cooldown, but only when a send was
+// genuinely attempted. With the kill switch off, or no API key, every send
+// "fails" — refunding on those would strip the throttle at exactly the moment
+// the kill switch is flipped.
+for (const [name, emailsEnabled, apiKey, want] of [
+  ['refund predicate: enabled + key', true, 're_test', true],
+  ['refund predicate: kill switch off', false, 're_test', false],
+  ['refund predicate: no api key', true, null, false],
+  ['refund predicate: off and unconfigured', false, null, false],
+]) {
+  resend.CONFIG.EMAILS_ENABLED = emailsEnabled;
+  resend.CONFIG.RESEND_API_KEY = apiKey;
+  cases.push([name, resend.sendingIsConfigured(), want]);
+}
 
 let failed = 0;
 for (const [name, got, want] of cases) {

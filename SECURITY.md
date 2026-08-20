@@ -154,6 +154,11 @@ property and update the page) if you see it being used.
   address, which means an attacker cycling through many distinct addresses never
   trips it — only `MAX_SUBMISSIONS_PER_HOUR` bounds them. Set that number as if
   it were the only limit, because against a determined caller it is.
+- **The hourly cap uses fixed buckets, not a sliding window.** The counter keys
+  on `floor(now / 1 hour)`, so a burst straddling a bucket boundary can pass up
+  to roughly twice `MAX_SUBMISSIONS_PER_HOUR` in a short span. A sliding window
+  isn't worth the complexity here — just size the cap knowing its real
+  short-run ceiling is about double the number you set.
 - **The rate limiter is best-effort, not a guarantee.** It is built on
   `CacheService`, which Apps Script may evict early under memory pressure. An
   evicted counter means a window resets sooner than intended. That is acceptable

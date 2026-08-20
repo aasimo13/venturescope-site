@@ -63,6 +63,8 @@ function doPost(e) {
       return jsonResponse({ status: 'error', message: 'Bad request' });
     }
 
+    // A processing cap, not a bandwidth one: Apps Script has already buffered
+    // the whole body by the time this runs.
     if (e.postData.contents.length > CONFIG.MAX_PAYLOAD_CHARS) {
       return jsonResponse({ status: 'error', message: 'Payload too large' });
     }
@@ -134,7 +136,14 @@ function jsonResponse(body) {
 }
 
 // ============================================
-// SECURITY HELPERS  (mirrors google-apps-script-with-resend.js)
+// SECURITY HELPERS
+//
+// These are duplicated verbatim from google-apps-script-with-resend.js, which
+// is the canonical copy — Apps Script projects can't share a module, and these
+// two deploy independently. Change them there first, then mirror the change
+// here. test-security-controls.js asserts the two copies reject the same
+// inputs and will fail if they drift, but it can only catch drift in behavior
+// it already covers, so keep them textually in step.
 // ============================================
 
 function verifyToken(provided) {

@@ -122,6 +122,9 @@ function doPost(e) {
       return jsonResponse({ status: 'error', message: 'Bad request' });
     }
 
+    // A processing cap, not a bandwidth one: Apps Script has already buffered
+    // the whole body by the time this runs, so it bounds the work we do on a
+    // huge payload, not the bytes spent receiving it.
     if (e.postData.contents.length > CONFIG.MAX_PAYLOAD_CHARS) {
       Logger.log('Rejected: payload exceeds MAX_PAYLOAD_CHARS.');
       return jsonResponse({ status: 'error', message: 'Payload too large' });
@@ -177,12 +180,19 @@ function doPost(e) {
         : handleIntakeForm(ss, data, recipient);
 
       // sendEmailViaResend swallows its own errors and returns false, so a
-      // Resend outage never reaches the catch below. Release the cooldown
-      // anyway: it exists to stop an address being blasted, and nothing was
+      // Resend outage never reaches the catch below. Release the cooldown in
+      // that case: it exists to stop an address being blasted, and nothing was
       // sent, so there is nothing to hold against a visitor who retries. The
       // global counter still bounds the retries.
-      if (!confirmationSent) {
-        Logger.log('Confirmation not sent — releasing recipient cooldown.');
+      //
+      // But only when sending was actually attempted. Both the kill switch and
+      // a missing API key make every send "fail", and releasing on each one
+      // would quietly strip the per-recipient throttle — in the kill switch's
+      // case at exactly the moment it is flipped, during an incident. When
+      // sending is off or unconfigured the cooldown stays, acting as a pure
+      // submission throttle.
+      if (!confirmationSent && sendingIsConfigured()) {
+        Logger.log('Confirmation attempted but not sent — releasing recipient cooldown.');
         releaseRecipientCooldown(recipient);
       }
     } catch (handlerError) {
@@ -526,6 +536,15 @@ function handleIntakeForm(ss, data, recipient) {
 // RESEND EMAIL FUNCTIONS
 // ============================================
 
+/**
+ * Whether a send would actually be attempted. Distinguishes "we tried and it
+ * failed" from "we were never going to try", which the caller needs in order
+ * to decide whether a failed send should refund a rate-limit reservation.
+ */
+function sendingIsConfigured() {
+  return Boolean(CONFIG.EMAILS_ENABLED && CONFIG.RESEND_API_KEY);
+}
+
 function sendEmailViaResend(to, subject, htmlContent, textContent) {
   if (!CONFIG.EMAILS_ENABLED) {
     Logger.log('EMAILS_ENABLED is false — skipping send to ' + to);
@@ -536,6 +555,7 @@ function sendEmailViaResend(to, subject, htmlContent, textContent) {
     Logger.log('RESEND_API_KEY is not set — skipping send.');
     return false;
   }
+
 
   // Last line of defense: never hand Resend anything but one valid address.
   const recipient = normalizeEmail(to);
@@ -976,7 +996,9 @@ function testSecurityControls() {
     ['token fails closed', verifyToken('anything'), function (r) { return CONFIG.FORM_SHARED_SECRET ? true : r === false; }],
     ['text fallback spacing', htmlToPlainText('<p>one</p><p>two</p>'), function (r) { return r === 'one\ntwo'; }],
     ['text fallback entities', htmlToPlainText('<p>Ben &amp; Co</p>'), function (r) { return r === 'Ben & Co'; }],
-    ['text fallback drops tags', htmlToPlainText('<p><script>x</script></p>'), function (r) { return r.indexOf('<') === -1; }]
+    ['text fallback drops tags', htmlToPlainText('<p><script>x</script></p>'), function (r) { return r.indexOf('<') === -1; }],
+    ['sendingIsConfigured tracks config', sendingIsConfigured(),
+      function (r) { return r === Boolean(CONFIG.EMAILS_ENABLED && CONFIG.RESEND_API_KEY); }]
   ];
 
   let failures = 0;
