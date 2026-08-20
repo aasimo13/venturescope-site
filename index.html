@@ -1697,11 +1697,22 @@
         throw new Error('Form backend is not configured. Please contact the site administrator.');
       }
 
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(Object.assign({ token: config.token }, payload))
-      });
+      let response;
+      try {
+        response = await fetch(config.endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(Object.assign({ token: config.token }, payload))
+        });
+      } catch (networkError) {
+        // A CORS-simple request is sent and processed by the server even when
+        // the browser then refuses to let us read the reply, so we cannot tell
+        // "response blocked" apart from "never left the machine". Treat it as
+        // delivered: that matches how this form behaved under mode:'no-cors',
+        // and a false failure message costs a real lead.
+        console.warn('Could not read the form response; assuming delivered.', networkError);
+        return { status: 'success', unverified: true };
+      }
 
       let result = null;
       try {
@@ -1709,7 +1720,7 @@
       } catch (parseError) {
         // Opaque or non-JSON response — treat as delivered rather than
         // scaring off a visitor whose submission probably landed.
-        return { status: 'success' };
+        return { status: 'success', unverified: true };
       }
 
       if (result && result.status === 'error') {

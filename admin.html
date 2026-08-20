@@ -665,22 +665,33 @@
     }
 
     // Test Google Sheets connection
+    // Server-supplied strings go in as text, never as markup. Every message the
+    // endpoint returns today is a fixed literal, so this is defense-in-depth
+    // against a future change threading something caller-influenced into it.
+    function showTestResult(kind, text) {
+      const resultDiv = document.getElementById('testResult');
+      resultDiv.textContent = '';
+      const box = document.createElement('div');
+      box.className = kind + '-message show';
+      box.textContent = text;
+      resultDiv.appendChild(box);
+    }
+
     async function testConnection() {
       const url = document.getElementById('googleScriptUrl').value;
       const token = document.getElementById('formToken').value.trim();
-      const resultDiv = document.getElementById('testResult');
 
       if (!url) {
-        resultDiv.innerHTML = '<div class="error-message show">Please enter a Google Apps Script URL first</div>';
+        showTestResult('error', 'Please enter a Google Apps Script URL first');
         return;
       }
 
       if (!token) {
-        resultDiv.innerHTML = '<div class="error-message show">Please enter the form shared token first — the endpoint rejects submissions without it</div>';
+        showTestResult('error', 'Please enter the form shared token first — the endpoint rejects submissions without it');
         return;
       }
 
-      resultDiv.innerHTML = '<p style="color: var(--gray);">Testing connection...</p>';
+      document.getElementById('testResult').textContent = 'Testing connection…';
 
       try {
         const testData = {
@@ -705,12 +716,12 @@
         const result = await response.json();
 
         if (result.status === 'success') {
-          resultDiv.innerHTML = '<div class="success-message show">✅ Test data accepted! Check your Google Sheet to verify it was received.</div>';
+          showTestResult('success', '✅ Test data accepted! Check your Google Sheet to verify it was received.');
         } else {
-          resultDiv.innerHTML = `<div class="error-message show">❌ Endpoint rejected the test: ${result.message}</div>`;
+          showTestResult('error', '❌ Endpoint rejected the test: ' + result.message);
         }
       } catch (error) {
-        resultDiv.innerHTML = `<div class="error-message show">❌ Connection failed: ${error.message}</div>`;
+        showTestResult('error', '❌ Connection failed: ' + error.message);
       }
     }
 

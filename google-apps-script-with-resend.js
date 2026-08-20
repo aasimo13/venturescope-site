@@ -91,7 +91,7 @@ const CONFIG = {
   RECIPIENT_COOLDOWN_MINUTES: 60,  // One confirmation per address per window
   MAX_FIELD_LENGTH: 500,           // Cap on ordinary fields
   MAX_LONGTEXT_LENGTH: 2000,       // Cap on free-text fields
-  MAX_PAYLOAD_BYTES: 50000,        // Reject oversized POST bodies outright
+  MAX_PAYLOAD_CHARS: 50000,        // Reject oversized POST bodies outright (JS string length, not bytes)
 
   // Company Info
   COMPANY_NAME: 'VentureScope Systems',
@@ -113,8 +113,8 @@ function doPost(e) {
       return jsonResponse({ status: 'error', message: 'Bad request' });
     }
 
-    if (e.postData.contents.length > CONFIG.MAX_PAYLOAD_BYTES) {
-      Logger.log('Rejected: payload exceeds MAX_PAYLOAD_BYTES.');
+    if (e.postData.contents.length > CONFIG.MAX_PAYLOAD_CHARS) {
+      Logger.log('Rejected: payload exceeds MAX_PAYLOAD_CHARS.');
       return jsonResponse({ status: 'error', message: 'Payload too large' });
     }
 
@@ -162,10 +162,19 @@ function doPost(e) {
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-    if (formType === 'quick') {
-      handleQuickForm(ss, data, recipient);
-    } else {
-      handleIntakeForm(ss, data, recipient);
+    try {
+      if (formType === 'quick') {
+        handleQuickForm(ss, data, recipient);
+      } else {
+        handleIntakeForm(ss, data, recipient);
+      }
+    } catch (handlerError) {
+      // Nothing was sent, so don't make a real visitor sit out an hour of
+      // cooldown for our failure. The global hourly counter is deliberately
+      // NOT released: refunding it on error would let anyone who can force an
+      // error hammer the endpoint without ever consuming the cap.
+      releaseRecipientCooldown(recipient);
+      throw handlerError;
     }
 
     return jsonResponse({ status: 'success', message: 'Form submitted successfully' });
@@ -199,14 +208,25 @@ function verifyToken(provided) {
     return false;
   }
 
-  const got = String(provided == null ? '' : provided);
-  if (got.length !== expected.length) return false;
+  // Compare SHA-256 digests rather than the raw strings. Digests are always
+  // 32 bytes, so there is no length check to short-circuit on and the
+  // comparison leaks neither the token nor its length through timing.
+  const got = sha256Bytes(String(provided == null ? '' : provided));
+  const want = sha256Bytes(expected);
 
   let diff = 0;
-  for (let i = 0; i < expected.length; i++) {
-    diff |= got.charCodeAt(i) ^ expected.charCodeAt(i);
+  for (let i = 0; i < want.length; i++) {
+    diff |= got[i] ^ want[i];
   }
   return diff === 0;
+}
+
+function sha256Bytes(value) {
+  return Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    value,
+    Utilities.Charset.UTF_8
+  );
 }
 
 /**
@@ -224,10 +244,7 @@ function checkRateLimits(recipient) {
   }
 
   try {
-    // Hash the address so we aren't storing raw emails in the cache.
-    const recipientKey = 'vs_recipient_' + Utilities.base64EncodeWebSafe(
-      Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, recipient)
-    );
+    const recipientKey = recipientCacheKey(recipient);
 
     if (cache.get(recipientKey)) {
       return {
@@ -256,6 +273,20 @@ function checkRateLimits(recipient) {
 
   } finally {
     lock.releaseLock();
+  }
+}
+
+/** Hash the address so we never store raw emails in the cache. */
+function recipientCacheKey(recipient) {
+  return 'vs_recipient_' + Utilities.base64EncodeWebSafe(sha256Bytes(recipient));
+}
+
+/** Refunds a per-recipient cooldown reserved for a submission that then failed. */
+function releaseRecipientCooldown(recipient) {
+  try {
+    CacheService.getScriptCache().remove(recipientCacheKey(recipient));
+  } catch (cacheError) {
+    Logger.log('Could not release recipient cooldown: ' + cacheError.toString());
   }
 }
 
@@ -843,11 +874,10 @@ function sendIntakeFormNotification(safe) {
  * Script Properties as FORM_SHARED_SECRET, and into index.html's FORM_TOKEN.
  */
 function generateSharedSecret() {
-  const bytes = [];
-  for (let i = 0; i < 24; i++) {
-    bytes.push(Math.floor(Math.random() * 256));
-  }
-  const secret = Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, '');
+  // Two UUIDs, not Math.random(). Math.random() is not a CSPRNG, and minting a
+  // security token is exactly the job where that distinction should be honored
+  // even though this particular token ships in public page source.
+  const secret = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
   Logger.log('FORM_SHARED_SECRET: ' + secret);
   Logger.log('Set this in Project Settings > Script Properties, then put the same value in index.html.');
   return secret;

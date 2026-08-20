@@ -13,7 +13,25 @@ through the site's Resend account. The caller supplied both the recipient addres
 and the message content, and neither was validated or escaped. Anyone who learned
 the `/exec` URL could send arbitrary email as VentureScope Systems.
 
-It was used to send phishing.
+### Was it used to send the phishing? No — and that matters
+
+Phishing *was* sent through this project's Resend account (a "TV Licence
+expiring" lure). A captured payload shows it did **not** come through this
+endpoint:
+
+```
+from: "TVLicensing.co.uk Support Centre" <…@homeforge.family>
+```
+
+Neither the old handler nor the new one lets a caller choose the `from` address —
+both build it from `CONFIG.FROM_EMAIL`. A caller-controlled sender means the
+attacker was calling `api.resend.com` directly with a stolen API key, and had
+added their own domain to the Resend account to send from it. That is
+**account compromise**, not relay abuse, and closing this endpoint does not
+address it. See the runbook at the bottom.
+
+The relay described below was nonetheless real, reachable, and exploitable. It
+is fixed here on its own merits — not because it was the vector.
 
 ### What was wrong
 
@@ -90,12 +108,24 @@ property and update the page) if you see it being used.
    Do this before anything else; diagnosis can wait, sending can't.
 2. **Revoke every Resend API key** and issue a new one.
 3. **Rotate `FORM_SHARED_SECRET`** and update the page.
-4. **Work out the entry point.** Cross-reference Resend → Logs against the Google
-   Sheet. A spam send *with* a matching sheet row came through this endpoint. A
-   send with *no* matching row means the API key itself is compromised and the
-   attacker is calling `api.resend.com` directly — in that case the endpoint
-   isn't the problem and disabling it won't stop anything.
-5. **Tell Resend before they find it.** Self-reported abuse is treated very
+4. **Work out the entry point — check the `from` address first.** It is the
+   fastest discriminator. This handler always sets `from` from
+   `CONFIG.FROM_EMAIL`, so **any send with a `from` you did not configure did
+   not come through this endpoint.** That means a stolen API key, and disabling
+   the endpoint will not stop it. Confirm by cross-referencing Resend → Logs
+   against the Google Sheet: a send through this endpoint always leaves a
+   matching sheet row, because the sheet is written before the email goes out.
+5. **On a stolen key, treat it as full account compromise.** An API key with
+   full access can add and verify new sending domains. Audit, in this order:
+   **Domains** (remove any you did not add), **API keys** (delete all, mint one),
+   **team members and pending invites**, **webhooks**. Then change the account
+   password and enable 2FA. Deleting one key fixes nothing if the attacker's
+   domain is still verified on the account.
+6. **Export the Resend logs before anything else.** On a stolen-key compromise
+   the recipient list exists *only* there — nothing reached the Google Sheet.
+   If Resend suspends the account you may lose access to the record of who was
+   targeted.
+7. **Tell Resend before they find it.** Self-reported abuse is treated very
    differently from discovered abuse.
-6. **Preserve the evidence.** Don't clear the sheet or the Apps Script execution
+8. **Preserve the evidence.** Don't clear the sheet or the Apps Script execution
    log — they are the only record of what was sent and to whom.
