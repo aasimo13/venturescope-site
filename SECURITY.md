@@ -24,11 +24,17 @@ from: "TVLicensing.co.uk Support Centre" <…@homeforge.family>
 ```
 
 Neither the old handler nor the new one lets a caller choose the `from` address —
-both build it from `CONFIG.FROM_EMAIL`. A caller-controlled sender means the
-attacker was calling `api.resend.com` directly with a stolen API key, and had
-added their own domain to the Resend account to send from it. That is
-**account compromise**, not relay abuse, and closing this endpoint does not
-address it. See the runbook at the bottom.
+both build it from `CONFIG.FROM_EMAIL`, which was `onboarding@resend.dev`. A
+caller-controlled sender is impossible through this endpoint.
+
+`homeforge.family` is **our own domain**, already verified on the Resend account.
+So nothing had to be added: a stolen API key with access to that domain was
+sufficient to send from it, using any local part the attacker chose
+(`tvlicensing-customersupport-…@`). Resend verifies domains, not addresses.
+
+The consequences are ours to wear: our own domain's SPF and DKIM authenticated
+that phishing, so its sending reputation is what took the damage. Closing this
+endpoint does not address any of it. See the runbook at the bottom.
 
 The relay described below was nonetheless real, reachable, and exploitable. It
 is fixed here on its own merits — not because it was the vector.
@@ -97,6 +103,13 @@ property and update the page) if you see it being used.
   to `onboarding@resend.dev`, Resend's shared test domain. Sending real mail from
   it puts your traffic on a reputation you share with every other account, and
   makes any abuse of yours everyone else's problem too. Use it for testing only.
+- **Scope API keys to one domain, and to sending only.** Resend keys can be
+  restricted per domain and to send-only access. A full-access key is what let
+  one leaked string reach every domain on the account. This form handler needs
+  to send from exactly one domain and needs to read nothing.
+- **Keep unrelated domains on separate accounts.** Every domain verified on an
+  account is reachable by any full-access key issued from it, so one leaked key
+  burns the reputation of all of them at once.
 - **Keep the caps low.** `MAX_SUBMISSIONS_PER_HOUR` should be a small multiple of
   your genuine peak, not a generous ceiling. A cap that never fires legitimately
   is a cap that's too high to help.
@@ -115,12 +128,18 @@ property and update the page) if you see it being used.
    the endpoint will not stop it. Confirm by cross-referencing Resend → Logs
    against the Google Sheet: a send through this endpoint always leaves a
    matching sheet row, because the sheet is written before the email goes out.
-5. **On a stolen key, treat it as full account compromise.** An API key with
-   full access can add and verify new sending domains. Audit, in this order:
-   **Domains** (remove any you did not add), **API keys** (delete all, mint one),
-   **team members and pending invites**, **webhooks**. Then change the account
-   password and enable 2FA. Deleting one key fixes nothing if the attacker's
-   domain is still verified on the account.
+5. **On a stolen key, treat it as full account compromise.** A full-access key
+   can enumerate your verified domains and send from any of them, and can also
+   add new ones, mint further keys, and read stored data. Audit, in this order:
+   **Audiences/Contacts** (were any stored lists readable, and do the targeted
+   addresses match them?), **Domains** (remove any you did not add; expect the
+   attacker to have used one you already had), **API keys** (delete all, mint
+   one), **team members and pending invites**, **webhooks**. Then change the
+   account password and enable 2FA.
+   The Audiences check comes first because it is the one that decides whether
+   this is also a personal-data breach rather than only an abuse-of-sending
+   incident — if the recipients came from your stored contacts, the reporting
+   obligations are different.
 6. **Export the Resend logs before anything else.** On a stolen-key compromise
    the recipient list exists *only* there — nothing reached the Google Sheet.
    If Resend suspends the account you may lose access to the record of who was
