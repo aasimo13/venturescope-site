@@ -151,7 +151,9 @@ property and update the page) if you see it being used.
 - **Verify your own sending domain in Resend.** `FROM_EMAIL` currently defaults
   to `onboarding@resend.dev`, Resend's shared test domain. Sending real mail from
   it puts your traffic on a reputation you share with every other account, and
-  makes any abuse of yours everyone else's problem too. Use it for testing only.
+  makes any abuse of yours everyone else's problem too. Use it for testing only —
+  `testSetup()` flags the default while it is still in place, and that warning
+  should be gone before any customer mail is sent.
 - **Scope API keys to one domain, and to sending only.** Resend keys can be
   restricted per domain and to send-only access. A full-access key is what let
   one leaked string reach every domain on the account. This form handler needs

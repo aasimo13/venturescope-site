@@ -115,7 +115,11 @@ Then run `testSetup()` to confirm both script properties are visible to the scri
 4. Follow DNS setup instructions
 5. Update `FROM_EMAIL` to use your domain (e.g., `hello@venturescope.systems`)
 
-**For Now:** The test domain works fine for testing!
+**Treat this as a blocker, not a checklist item.** `onboarding@resend.dev` is
+fine while you are testing and wrong for customer mail: you inherit a sending
+reputation shared with every unverified Resend account, and any abuse of yours
+lands on everyone else using it. `testSetup()` flags the default while it is
+still in place — don't send real mail until that line stops appearing.
 
 ### Step 4b: After every redeploy — re-run Test Connection
 

@@ -224,6 +224,8 @@ function checkRateLimits(email, formType) {
       };
     }
 
+    // Two puts, not one atomic write — see the note in the Resend handler.
+    // Self-limiting, not attacker-reachable, and errs toward over-counting.
     cache.put(globalKey, String(count + 1), 3600);
     cache.put(key, '1', cacheTtlSeconds(CONFIG.RECIPIENT_COOLDOWN_MINUTES));
     return { ok: true };

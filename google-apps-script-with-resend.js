@@ -90,7 +90,11 @@ const CONFIG = {
   FORM_SHARED_SECRET: PropertiesService.getScriptProperties().getProperty('FORM_SHARED_SECRET'),
 
   // Email Settings
-  FROM_EMAIL: 'onboarding@resend.dev', // Update with your verified domain in Resend
+  // BLOCKER before real use: this is Resend's SHARED test domain. Mail sent
+  // from it rides a reputation you share with every other Resend account, and
+  // your abuse becomes theirs. Verify your own domain at resend.com/domains and
+  // change this. testSetup() flags it while it is still set to the default.
+  FROM_EMAIL: 'onboarding@resend.dev',
   FROM_NAME: 'VentureScope Systems',
 
   // Business notification email (where you want to receive notifications)
@@ -311,6 +315,12 @@ function checkRateLimits(recipient, formType) {
       };
     }
 
+    // Two puts, not one atomic write. If the first lands and the second
+    // throws on a transient CacheService error, this request consumes a slot
+    // of the global count without reserving a cooldown, and the throw reaches
+    // doPost's outer catch as a generic failure. Left as-is deliberately: it
+    // is self-limiting, not attacker-reachable, and it errs toward
+    // over-counting the global cap, which is the safe direction to err in.
     cache.put(globalKey, String(count + 1), 3600);
     cache.put(recipientKey, '1', cacheTtlSeconds(CONFIG.RECIPIENT_COOLDOWN_MINUTES));
 
@@ -579,6 +589,15 @@ function handleIntakeForm(ss, data, recipient) {
  * failed" from "we were never going to try", which the caller needs in order
  * to decide whether a failed send should refund a rate-limit reservation.
  */
+/**
+ * Resend's onboarding domain is shared across every account that hasn't
+ * verified one of its own. Fine for testing, wrong for customer mail: you
+ * inherit a reputation you don't control and contribute to one you do.
+ */
+function isSharedTestDomain(fromEmail) {
+  return /@resend\.dev\s*$/i.test(String(fromEmail || ''));
+}
+
 function sendingIsConfigured() {
   return Boolean(CONFIG.EMAILS_ENABLED && CONFIG.RESEND_API_KEY);
 }
@@ -593,7 +612,6 @@ function sendEmailViaResend(to, subject, htmlContent, textContent) {
     Logger.log('RESEND_API_KEY is not set — skipping send.');
     return false;
   }
-
 
   // Last line of defense: never hand Resend anything but one valid address.
   const recipient = normalizeEmail(to);
@@ -1009,6 +1027,10 @@ function testSetup() {
   Logger.log('Spreadsheet name: ' + ss.getName());
   Logger.log('Spreadsheet ID: ' + ss.getId());
   Logger.log('Resend API Key configured: ' + (CONFIG.RESEND_API_KEY ? 'Yes' : 'No'));
+  Logger.log('From address: ' + CONFIG.FROM_EMAIL +
+    (isSharedTestDomain(CONFIG.FROM_EMAIL)
+      ? '  <-- SHARED TEST DOMAIN. Verify your own domain in Resend before sending real mail.'
+      : ''));
   Logger.log('Shared secret configured: ' + (CONFIG.FORM_SHARED_SECRET ? 'Yes' : 'No — ALL SUBMISSIONS WILL BE REJECTED'));
   Logger.log('Emails enabled: ' + CONFIG.EMAILS_ENABLED);
   Logger.log('Global cap: ' + CONFIG.MAX_SUBMISSIONS_PER_HOUR + '/hour');
@@ -1035,6 +1057,8 @@ function testSecurityControls() {
     ['text fallback spacing', htmlToPlainText('<p>one</p><p>two</p>'), function (r) { return r === 'one\ntwo'; }],
     ['text fallback entities', htmlToPlainText('<p>Ben &amp; Co</p>'), function (r) { return r === 'Ben & Co'; }],
     ['text fallback drops tags', htmlToPlainText('<p><script>x</script></p>'), function (r) { return r.indexOf('<') === -1; }],
+    ['shared test domain detected', isSharedTestDomain('onboarding@resend.dev'), function (r) { return r === true; }],
+    ['own domain not flagged', isSharedTestDomain('hello@venturescope.systems'), function (r) { return r === false; }],
     ['cache ttl clamped to 6h', cacheTtlSeconds(600), function (r) { return r === 21600; }],
     ['cache ttl normal passes', cacheTtlSeconds(60), function (r) { return r === 3600; }],
     ['sendingIsConfigured tracks config', sendingIsConfigured(),

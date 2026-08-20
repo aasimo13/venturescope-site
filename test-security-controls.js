@@ -64,7 +64,8 @@ function loadScript(filename, sharedSecret) {
     source + '\nreturn { verifyToken, isValidEmail, plainText, sheetSafe' +
     (filename.includes('resend')
       ? ', safeField, safeParagraph, safeSubject, safeUrl, htmlToPlainText,' +
-        ' sendingIsConfigured, cacheTtlSeconds, recipientCacheKey, CONFIG'
+        ' sendingIsConfigured, cacheTtlSeconds, recipientCacheKey,' +
+        ' isSharedTestDomain, CONFIG'
       : ', cacheTtlSeconds, submitterCacheKey') +
     ' };'
   )(properties, LOGGER, UTILITIES);
@@ -162,6 +163,17 @@ cases.push(
   ['legacy: wrong token rejected', legacyConfigured.verifyToken('not-the-secret'), false],
   ['legacy: same-length near-miss rejected',
     legacyConfigured.verifyToken(SECRET.slice(0, -1) + 'X'), false]
+);
+
+// FROM_EMAIL defaulting to Resend's shared onboarding domain is a deliverability
+// and reputation problem independent of the security fix; testSetup() flags it.
+cases.push(
+  ['shared domain: default flagged', resend.isSharedTestDomain('onboarding@resend.dev'), true],
+  ['shared domain: any local part flagged', resend.isSharedTestDomain('x@resend.dev'), true],
+  ['shared domain: case insensitive', resend.isSharedTestDomain('X@ReSeNd.DeV'), true],
+  ['shared domain: own domain passes', resend.isSharedTestDomain('hello@venturescope.systems'), false],
+  ['shared domain: lookalike passes', resend.isSharedTestDomain('a@notresend.dev.example.com'), false],
+  ['shared domain: empty passes', resend.isSharedTestDomain(''), false],
 );
 
 // CacheService rejects a TTL over 6 hours. An unclamped config value would
