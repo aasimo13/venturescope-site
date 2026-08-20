@@ -4,22 +4,24 @@ Your VentureScope site sends confirmation emails through Resend. 📧
 
 > ### ⚠️ Read `SECURITY.md` first
 >
-> The first version of this integration was an **open email relay** — an
-> unauthenticated endpoint that sent email to any address, with any content, that
-> a caller supplied. It was abused to send phishing. The current script closes
-> that hole, but only if you complete **every** step below, including the shared
-> secret. The script rejects all submissions until `FORM_SHARED_SECRET` is set.
+> A public form endpoint that sends confirmation email is an **open email relay**
+> unless something stops it. The script's controls are what stop it, and they only
+> work if you complete **every** step below, including the shared secret — the
+> script rejects all submissions until `FORM_SHARED_SECRET` is set.
 
 ## 🔐 Security First: Rotate Your Credentials
 
-Do this before anything else, and do it again any time a key may have been seen.
+Do this before anything else, and again any time a key may have been seen.
 
-### Step 1: Regenerate your Resend API key
+### Step 1: Create a scoped Resend API key
 
 1. Go to https://resend.com/api-keys
-2. **Delete or revoke every existing key** — not just the one you think leaked
-3. Click **Create API Key**, name it "VentureScope Production"
-4. Copy the new key. You'll paste it into Script Properties in Step 3.
+2. Click **Create API Key**, name it "VentureScope Production"
+3. **Scope it**: sending permission only, restricted to the one domain this form
+   sends from. This handler needs to send from exactly one domain and needs to
+   read nothing — a full-access key means one leaked string reaches every domain
+   on the account.
+4. Copy the key. You'll paste it into Script Properties in Step 3.
 
 Never paste a key into this repo, a commit, an issue, or a chat. This repository
 is public, and bots scrape GitHub's public event feed for `re_…` strings within

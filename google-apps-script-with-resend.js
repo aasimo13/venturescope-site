@@ -13,11 +13,15 @@
  *
  * SECURITY NOTE — READ THIS FIRST
  * --------------------------------
- * An earlier version of this script was an open email relay: it accepted
- * unauthenticated POSTs and then sent HTML email, using the site's Resend
- * account, to whatever address the caller supplied, with whatever content the
- * caller supplied. Anyone who knew the /exec URL could send arbitrary email as
- * VentureScope. This version closes that hole with layered controls:
+ * This endpoint is deployed with access "Anyone", because a public contact form
+ * has no other option — visitors have no Google session to authenticate with.
+ * That makes the /exec URL a public, unauthenticated HTTP endpoint that sends
+ * email. Without the controls below, that is an open email relay: a caller who
+ * chooses both the recipient and the content can send whatever they like to
+ * whoever they like, from your domain and on your sending reputation.
+ *
+ * Do not remove any of these, and do not add a code path that emails an address
+ * the caller supplied without going through them:
  *
  * These are numbered in the order doPost applies them. Keep the numbering here,
  * the inline "Layer N" comments, and SECURITY.md in step — under incident

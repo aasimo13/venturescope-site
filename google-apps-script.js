@@ -6,10 +6,9 @@
  * │ this does and also sends confirmation emails.                            │
  * │                                                                          │
  * │ This file is kept for deployments that only want rows in a sheet and no  │
- * │ email at all. It carries the same abuse controls as its sibling, for the │
- * │ reason described in SECURITY.md: an earlier revision of the Resend       │
- * │ handler was an unauthenticated endpoint and was abused. This script had  │
- * │ the same shape. Do not deploy a copy of the old version of either.       │
+ * │ email at all. It carries the same abuse controls as its sibling: it is   │
+ * │ the same kind of public unauthenticated endpoint, and needs them for the │
+ * │ same reasons. See SECURITY.md.                                           │
  * └──────────────────────────────────────────────────────────────────────────┘
  *
  * SETUP INSTRUCTIONS:
