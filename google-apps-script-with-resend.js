@@ -103,7 +103,10 @@ const CONFIG = {
 
   // Abuse limits — tune these to your real traffic. Lower is safer.
   MAX_SUBMISSIONS_PER_HOUR: 20,    // Global cap across all visitors
-  RECIPIENT_COOLDOWN_MINUTES: 60,  // One confirmation per address per window
+  RECIPIENT_COOLDOWN_MINUTES: 60,  // One confirmation per address, per form, per window.
+                                   // Capped at 360 (6h) — CacheService's TTL
+                                   // ceiling. A longer cooldown needs a
+                                   // different store; see cacheTtlSeconds().
   MAX_FIELD_LENGTH: 500,           // Cap on ordinary fields
   MAX_LONGTEXT_LENGTH: 2000,       // Cap on free-text fields
   MAX_PAYLOAD_CHARS: 50000,        // Reject oversized POST bodies outright (JS string length, not bytes)
@@ -149,7 +152,7 @@ function doPost(e) {
 
     // Layer 2: honeypot. A real browser leaves this hidden field empty.
     // Answer with success so bots record a win and don't retry.
-    if (String(data.hp_company_url || '').trim() !== '') {
+    if (String(data.hp_field_b7 || '').trim() !== '') {
       Logger.log('Honeypot triggered — dropping submission.');
       return jsonResponse({ status: 'success', message: 'Form submitted successfully' });
     }
@@ -172,7 +175,7 @@ function doPost(e) {
     }
 
     // Layer 5: rate limits.
-    const gate = checkRateLimits(recipient);
+    const gate = checkRateLimits(recipient, formType);
     if (!gate.ok) {
       Logger.log('Rejected by rate limit: ' + gate.reason);
       return jsonResponse({ status: 'error', message: gate.message });
@@ -199,14 +202,14 @@ function doPost(e) {
       // submission throttle.
       if (!confirmationSent && sendingIsConfigured()) {
         Logger.log('Confirmation attempted but not sent — releasing recipient cooldown.');
-        releaseRecipientCooldown(recipient);
+        releaseRecipientCooldown(recipient, formType);
       }
     } catch (handlerError) {
       // Nothing was sent, so don't make a real visitor sit out an hour of
       // cooldown for our failure. The global hourly counter is deliberately
       // NOT released: refunding it on error would let anyone who can force an
       // error hammer the endpoint without ever consuming the cap.
-      releaseRecipientCooldown(recipient);
+      releaseRecipientCooldown(recipient, formType);
       throw handlerError;
     }
 
@@ -266,7 +269,7 @@ function sha256Bytes(value) {
  * Global hourly cap plus a per-recipient cooldown, serialized with a script
  * lock so concurrent requests can't race past the counter.
  */
-function checkRateLimits(recipient) {
+function checkRateLimits(recipient, formType) {
   const cache = CacheService.getScriptCache();
   const lock = LockService.getScriptLock();
 
@@ -277,7 +280,7 @@ function checkRateLimits(recipient) {
   }
 
   try {
-    const recipientKey = recipientCacheKey(recipient);
+    const recipientKey = recipientCacheKey(recipient, formType);
 
     if (cache.get(recipientKey)) {
       return {
@@ -300,7 +303,7 @@ function checkRateLimits(recipient) {
     }
 
     cache.put(globalKey, String(count + 1), 3600);
-    cache.put(recipientKey, '1', CONFIG.RECIPIENT_COOLDOWN_MINUTES * 60);
+    cache.put(recipientKey, '1', cacheTtlSeconds(CONFIG.RECIPIENT_COOLDOWN_MINUTES));
 
     return { ok: true };
 
@@ -309,15 +312,35 @@ function checkRateLimits(recipient) {
   }
 }
 
-/** Hash the address so we never store raw emails in the cache. */
-function recipientCacheKey(recipient) {
-  return 'vs_recipient_' + Utilities.base64EncodeWebSafe(sha256Bytes(recipient));
+/**
+ * Hash the address so we never store raw emails in the cache.
+ *
+ * Keyed on form type as well, so someone who sends the quick form and then
+ * comes back to complete the full intake isn't silently rate limited on the
+ * second one. That is a real flow, and it costs us nothing: each form is still
+ * bounded to one message per address per window, which is the property the
+ * cooldown exists for.
+ */
+function recipientCacheKey(recipient, formType) {
+  return 'vs_recipient_' + formType + '_' +
+    Utilities.base64EncodeWebSafe(sha256Bytes(recipient));
+}
+
+/**
+ * CacheService rejects any TTL above 6 hours. Clamp rather than let a config
+ * value above that throw inside checkRateLimits, bubble to doPost's outer
+ * catch, and reject every submission with a generic "Submission failed" — a
+ * miserable way to discover a typo in a config constant.
+ */
+function cacheTtlSeconds(minutes) {
+  const CACHE_MAX_TTL_SECONDS = 21600; // 6 hours, Apps Script's hard ceiling
+  return Math.min(Math.max(Math.floor(minutes * 60), 1), CACHE_MAX_TTL_SECONDS);
 }
 
 /** Refunds a per-recipient cooldown reserved for a submission that then failed. */
-function releaseRecipientCooldown(recipient) {
+function releaseRecipientCooldown(recipient, formType) {
   try {
-    CacheService.getScriptCache().remove(recipientCacheKey(recipient));
+    CacheService.getScriptCache().remove(recipientCacheKey(recipient, formType));
   } catch (cacheError) {
     Logger.log('Could not release recipient cooldown: ' + cacheError.toString());
   }
@@ -1003,6 +1026,8 @@ function testSecurityControls() {
     ['text fallback spacing', htmlToPlainText('<p>one</p><p>two</p>'), function (r) { return r === 'one\ntwo'; }],
     ['text fallback entities', htmlToPlainText('<p>Ben &amp; Co</p>'), function (r) { return r === 'Ben & Co'; }],
     ['text fallback drops tags', htmlToPlainText('<p><script>x</script></p>'), function (r) { return r.indexOf('<') === -1; }],
+    ['cache ttl clamped to 6h', cacheTtlSeconds(600), function (r) { return r === 21600; }],
+    ['cache ttl normal passes', cacheTtlSeconds(60), function (r) { return r === 3600; }],
     ['sendingIsConfigured tracks config', sendingIsConfigured(),
       function (r) { return r === Boolean(CONFIG.EMAILS_ENABLED && CONFIG.RESEND_API_KEY); }]
   ];

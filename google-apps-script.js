@@ -50,7 +50,7 @@ const CONFIG = {
   FORM_SHARED_SECRET: PropertiesService.getScriptProperties().getProperty('FORM_SHARED_SECRET'),
 
   MAX_SUBMISSIONS_PER_HOUR: 20,
-  RECIPIENT_COOLDOWN_MINUTES: 60,
+  RECIPIENT_COOLDOWN_MINUTES: 60,  // Capped at 360 (6h), CacheService's TTL ceiling
   MAX_FIELD_LENGTH: 500,
   MAX_LONGTEXT_LENGTH: 2000,
   MAX_PAYLOAD_CHARS: 50000
@@ -82,7 +82,7 @@ function doPost(e) {
 
     // Honeypot — a real browser leaves this empty. Fake success so bots
     // don't retry.
-    if (String(data.hp_company_url || '').trim() !== '') {
+    if (String(data.hp_field_b7 || '').trim() !== '') {
       Logger.log('Honeypot triggered — dropping submission.');
       return jsonResponse({ status: 'success', message: 'Form submitted successfully' });
     }
@@ -103,7 +103,7 @@ function doPost(e) {
       return jsonResponse({ status: 'error', message: 'A valid email address is required' });
     }
 
-    const gate = checkRateLimits(submitter);
+    const gate = checkRateLimits(submitter, formType);
     if (!gate.ok) {
       Logger.log('Rejected by rate limit: ' + gate.reason);
       return jsonResponse({ status: 'error', message: gate.message });
@@ -174,11 +174,25 @@ function sha256Bytes(value) {
   );
 }
 
-function submitterCacheKey(email) {
-  return 'vs_sheets_' + Utilities.base64EncodeWebSafe(sha256Bytes(email));
+/**
+ * Keyed on form type as well as address, so completing the quick form and then
+ * the full intake isn't silently rate limited on the second one.
+ */
+function submitterCacheKey(email, formType) {
+  return 'vs_sheets_' + formType + '_' +
+    Utilities.base64EncodeWebSafe(sha256Bytes(email));
 }
 
-function checkRateLimits(email) {
+/**
+ * CacheService rejects any TTL above 6 hours. Clamp rather than let a config
+ * value above that throw and reject every submission with a generic error.
+ */
+function cacheTtlSeconds(minutes) {
+  const CACHE_MAX_TTL_SECONDS = 21600; // 6 hours, Apps Script's hard ceiling
+  return Math.min(Math.max(Math.floor(minutes * 60), 1), CACHE_MAX_TTL_SECONDS);
+}
+
+function checkRateLimits(email, formType) {
   const cache = CacheService.getScriptCache();
   const lock = LockService.getScriptLock();
 
@@ -189,7 +203,7 @@ function checkRateLimits(email) {
   }
 
   try {
-    const key = submitterCacheKey(email);
+    const key = submitterCacheKey(email, formType);
     if (cache.get(key)) {
       return {
         ok: false,
@@ -211,7 +225,7 @@ function checkRateLimits(email) {
     }
 
     cache.put(globalKey, String(count + 1), 3600);
-    cache.put(key, '1', CONFIG.RECIPIENT_COOLDOWN_MINUTES * 60);
+    cache.put(key, '1', cacheTtlSeconds(CONFIG.RECIPIENT_COOLDOWN_MINUTES));
     return { ok: true };
 
   } finally {

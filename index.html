@@ -1112,10 +1112,13 @@
             <span class="form-error">Please select a service</span>
           </div>
 
-          <!-- Honeypot: hidden from humans, filled in by naive bots. Server drops any submission where this is non-empty. -->
+          <!-- Honeypot: hidden from humans, filled in by naive bots. Server drops any
+               submission where this is non-empty. The name and label are deliberately
+               meaningless — a field called "Company URL" is a plausible autofill target,
+               and a false positive here silently discards a real lead. -->
           <div class="hp-field" aria-hidden="true">
-            <label for="quick-hp">Company URL</label>
-            <input type="text" id="quick-hp" name="hp_company_url" tabindex="-1" autocomplete="off">
+            <label for="quick-hp">Leave this field blank</label>
+            <input type="text" id="quick-hp" name="hp_field_b7" tabindex="-1" autocomplete="off">
           </div>
 
           <button type="submit" class="btn btn-gradient btn-block btn-lg">
@@ -1574,10 +1577,12 @@
               <span class="form-error">Please agree to the terms</span>
             </div>
 
-            <!-- Honeypot: hidden from humans, filled in by naive bots. Server drops any submission where this is non-empty. -->
+            <!-- Honeypot: hidden from humans, filled in by naive bots. Server drops any
+                 submission where this is non-empty. The name and label are deliberately
+                 meaningless — see the quick form's honeypot for why. -->
             <div class="hp-field" aria-hidden="true">
-              <label for="intake-hp">Company URL</label>
-              <input type="text" id="intake-hp" name="hp_company_url" tabindex="-1" autocomplete="off">
+              <label for="intake-hp">Leave this field blank</label>
+              <input type="text" id="intake-hp" name="hp_field_b7" tabindex="-1" autocomplete="off">
             </div>
 
             <div class="form-navigation">
@@ -1796,7 +1801,7 @@
           fullName: formData.get('fullName'),
           email: formData.get('email'),
           service: formData.get('service'),
-          hp_company_url: formData.get('hp_company_url')
+          hp_field_b7: formData.get('hp_field_b7')
         });
 
         // Reset form
@@ -1973,7 +1978,7 @@
           startDate: formData.get('startDate'),
           budgetRange: formData.get('budgetRange'),
           hearAbout: formData.get('hearAbout'),
-          hp_company_url: formData.get('hp_company_url')
+          hp_field_b7: formData.get('hp_field_b7')
         });
 
         // Hide form, show success message. Same reasoning as the quick form:

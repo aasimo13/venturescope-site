@@ -55,8 +55,13 @@ is fixed here on its own merits — not because it was the vector.
 `google-apps-script-with-resend.js` now applies six layers, in this order:
 
 1. **Payload cap** — bodies over `MAX_PAYLOAD_CHARS` are rejected before parsing.
-2. **Honeypot** — a hidden `hp_company_url` field; any non-empty value is dropped
-   with a fake success response so bots don't retry.
+2. **Honeypot** — a hidden `hp_field_b7` field; any non-empty value is dropped
+   with a fake success response so bots don't retry. Its name and label are
+   deliberately meaningless: a hidden field called "Company URL" is a plausible
+   target for password managers and form-fill extensions, and a false positive
+   there silently discards a real lead — the visitor sees success and nothing is
+   ever recorded. If sheet rows ever fall noticeably short of form opens, this is
+   the first thing to suspect.
 3. **Shared-secret token** — `verifyToken()` compares `data.token` against the
    `FORM_SHARED_SECRET` script property in constant time. **It fails closed**: if
    the property is unset, every submission is rejected.
@@ -66,7 +71,13 @@ is fixed here on its own merits — not because it was the vector.
 5. **Rate limiting** — `checkRateLimits()` enforces a global hourly cap plus a
    per-recipient cooldown, serialized under a `LockService` script lock so
    concurrent requests can't race the counter. Addresses are SHA-256 hashed
-   before being used as cache keys.
+   before being used as cache keys, and the cooldown is keyed on form type as
+   well, so someone who sends the quick form and later completes the full intake
+   isn't silently blocked on the second — each form stays bounded to one message
+   per address per window, which is the property that matters.
+   Cooldowns above 6 hours are clamped: `CacheService` rejects a longer TTL, and
+   an unclamped value would throw inside the limiter, reach `doPost`'s outer
+   catch, and reject *every* submission with a generic "Submission failed".
 6. **Output escaping** — every caller-supplied value passes through
    `safeField`, `safeParagraph`, `safeSubject`, or `safeUrl` before it reaches a
    template. `safeUrl` accepts only absolute `http(s)` URLs, so `javascript:` and

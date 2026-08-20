@@ -64,8 +64,8 @@ function loadScript(filename, sharedSecret) {
     source + '\nreturn { verifyToken, isValidEmail, plainText, sheetSafe' +
     (filename.includes('resend')
       ? ', safeField, safeParagraph, safeSubject, safeUrl, htmlToPlainText,' +
-        ' sendingIsConfigured, CONFIG'
-      : '') +
+        ' sendingIsConfigured, cacheTtlSeconds, recipientCacheKey, CONFIG'
+      : ', cacheTtlSeconds, submitterCacheKey') +
     ' };'
   )(properties, LOGGER, UTILITIES);
 }
@@ -162,6 +162,33 @@ cases.push(
   ['legacy: wrong token rejected', legacyConfigured.verifyToken('not-the-secret'), false],
   ['legacy: same-length near-miss rejected',
     legacyConfigured.verifyToken(SECRET.slice(0, -1) + 'X'), false]
+);
+
+// CacheService rejects a TTL over 6 hours. An unclamped config value would
+// throw inside the limiter and reject every submission with a generic error.
+cases.push(
+  ['ttl: normal value passes', resend.cacheTtlSeconds(60), 3600],
+  ['ttl: clamped at 6h ceiling', resend.cacheTtlSeconds(600), 21600],
+  ['ttl: exactly at ceiling', resend.cacheTtlSeconds(360), 21600],
+  ['ttl: never below 1s', resend.cacheTtlSeconds(0), 1],
+  ['ttl: legacy clamps identically', legacy.cacheTtlSeconds(600), 21600],
+);
+
+// The cooldown key includes form type, so a quick-form submitter isn't blocked
+// when they come back to complete the full intake.
+cases.push(
+  ['cooldown key differs per form',
+    resend.recipientCacheKey('a@b.com', 'quick') !== resend.recipientCacheKey('a@b.com', 'intake'),
+    true],
+  ['cooldown key stable per form',
+    resend.recipientCacheKey('a@b.com', 'quick') === resend.recipientCacheKey('a@b.com', 'quick'),
+    true],
+  ['cooldown key differs per address',
+    resend.recipientCacheKey('a@b.com', 'quick') !== resend.recipientCacheKey('c@d.com', 'quick'),
+    true],
+  ['cooldown key does not contain the address',
+    resend.recipientCacheKey('a@b.com', 'quick').includes('a@b.com'),
+    false],
 );
 
 // A failed send refunds the per-recipient cooldown, but only when a send was
